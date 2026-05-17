@@ -258,9 +258,57 @@ func (s *diskService) Versions(ctx context.Context, req *artifact.VersionsReques
 	return &artifact.VersionsResponse{Versions: versions}, nil
 }
 
+// GetArtifactVersion implements [artifact.Service] and returns the metadata for a specific version.
 func (s *diskService) GetArtifactVersion(ctx context.Context, req *artifact.GetArtifactVersionRequest) (*artifact.GetArtifactVersionResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("request validation failed: %w", err)
+	}
+	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	version := req.Version
+
+	// If version is 0, resolve to the latest version
+	if version == 0 {
+		response, err := s.Versions(ctx, &artifact.VersionsRequest{
+			AppName: appName, UserID: userID, SessionID: sessionID, FileName: fileName,
+		})
+		if err != nil {
+			return nil, err
+		}
+		version = slices.Max(response.Versions)
+	}
+
+	filePath := s.buildPath(appName, userID, sessionID, fileName, version)
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
+		}
+		return nil, fmt.Errorf("failed to stat artifact: %w", err)
+	}
+
+	// Determine MIME type from file extension
+	mimeType := mime.TypeByExtension(filepath.Ext(fileName))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	// Build canonical URI
+	var canonicalURI string
+	if s.cfg.FsBaseUrl != "" {
+		canonicalURI = strings.TrimRight(s.cfg.FsBaseUrl, "/") + "/" + strings.TrimLeft(filePath, "/")
+	} else {
+		canonicalURI = "file://" + filePath
+	}
+
+	return &artifact.GetArtifactVersionResponse{
+		ArtifactVersion: &artifact.ArtifactVersion{
+			Version:      version,
+			CanonicalURI: canonicalURI,
+			CreateTime:   float64(info.ModTime().Unix()),
+			MimeType:     mimeType,
+		},
+	}, nil
 }
 
 var _ artifact.Service = (*diskService)(nil)

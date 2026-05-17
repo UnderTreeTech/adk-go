@@ -375,9 +375,87 @@ func (s *s3Service) Versions(ctx context.Context, req *artifact.VersionsRequest)
 	return response, nil
 }
 
+// GetArtifactVersion implements [artifact.Service] and returns the metadata for a specific version.
 func (s *s3Service) GetArtifactVersion(ctx context.Context, req *artifact.GetArtifactVersionRequest) (*artifact.GetArtifactVersionResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	err := req.Validate()
+	if err != nil {
+		return nil, fmt.Errorf("request validation failed: %w", err)
+	}
+	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	version := req.Version
+
+	// If version is 0, resolve to the latest version
+	if version == 0 {
+		response, err := s.versions(ctx, &artifact.VersionsRequest{
+			AppName: appName, UserID: userID, SessionID: sessionID, FileName: fileName,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list artifact versions: %w", err)
+		}
+		if len(response.Versions) == 0 {
+			return nil, fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
+		}
+		version = slices.Max(response.Versions)
+	}
+
+	blobName := buildBlobName(appName, userID, sessionID, fileName, version)
+
+	resp, err := s.client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucketName),
+		Key:    aws.String(blobName),
+	})
+	if err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			if aerr.Code() == "NotFound" || aerr.Code() == s3.ErrCodeNoSuchKey {
+				return nil, fmt.Errorf("artifact '%s' not found: %w", blobName, fs.ErrNotExist)
+			}
+		}
+		return nil, fmt.Errorf("could not get object metadata '%s': %w", blobName, err)
+	}
+
+	// Build canonical URI
+	var canonicalURI string
+	if s.cfg.ExternalEndpoint != "" {
+		schema := s.cfg.ExternalSchema
+		if schema == "" {
+			schema = "https"
+		}
+		canonicalURI = fmt.Sprintf("%s://%s/%s/%s", schema, s.cfg.ExternalEndpoint, s.bucketName, blobName)
+	} else {
+		canonicalURI = fmt.Sprintf("s3://%s/%s", s.bucketName, blobName)
+	}
+
+	// Extract content type
+	contentType := "application/octet-stream"
+	if resp.ContentType != nil {
+		contentType = *resp.ContentType
+	}
+
+	// Extract custom metadata
+	customMeta := make(map[string]any)
+	if resp.Metadata != nil {
+		for k, v := range resp.Metadata {
+			if v != nil {
+				customMeta[k] = *v
+			}
+		}
+	}
+
+	// Extract create time
+	var createTime float64
+	if resp.LastModified != nil {
+		createTime = float64(resp.LastModified.Unix())
+	}
+
+	return &artifact.GetArtifactVersionResponse{
+		ArtifactVersion: &artifact.ArtifactVersion{
+			Version:        version,
+			CanonicalURI:   canonicalURI,
+			CustomMetadata: customMeta,
+			CreateTime:     createTime,
+			MimeType:       contentType,
+		},
+	}, nil
 }
 
 var _ artifact.Service = (*s3Service)(nil)
