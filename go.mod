@@ -4,14 +4,13 @@ go 1.25.5
 
 require (
 	charm.land/catwalk v0.25.0
-	github.com/UnderTreeTech/waterdrop v1.3.7-0.20251205054438-2f6efc02dad6
+	github.com/UnderTreeTech/waterdrop v1.3.7-0.20260517145935-6c302732cc38
 	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
 	github.com/openai/openai-go/v3 v3.16.0
 	github.com/redis/go-redis/v9 v9.17.2
-	go.mongodb.org/mongo-driver v1.8.2
 	go.opentelemetry.io/otel v1.41.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.41.0
 	go.opentelemetry.io/otel/sdk v1.41.0
@@ -76,6 +75,7 @@ require (
 	github.com/xdg-go/scram v1.1.0 // indirect
 	github.com/xdg-go/stringprep v1.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20181117223130-1be2e3e5546d // indirect
+	go.mongodb.org/mongo-driver v1.8.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.40.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect

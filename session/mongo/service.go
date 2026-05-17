@@ -11,7 +11,6 @@ import (
 	"github.com/UnderTreeTech/waterdrop/pkg/log"
 	"github.com/UnderTreeTech/waterdrop/pkg/utils/xtime"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
@@ -360,23 +359,23 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 
 	// 1. 处理 Actions
 	if d.Actions != nil {
-		bytes, err := bson.Marshal(d.Actions)
+		bytes, err := mongo.Marshal(d.Actions)
 		if err != nil {
 			return nil, fmt.Errorf("marshal actions: %w", err)
 		}
-		if err := bson.Unmarshal(bytes, &e.Actions); err != nil {
+		if err := mongo.Unmarshal(bytes, &e.Actions); err != nil {
 			return nil, fmt.Errorf("unmarshal actions: %w", err)
 		}
 	}
 
 	// 2. 处理 Content (*genai.Content)
 	if d.Content != nil {
-		bytes, err := bson.Marshal(d.Content)
+		bytes, err := mongo.Marshal(d.Content)
 		if err != nil {
 			return nil, fmt.Errorf("marshal content: %w", err)
 		}
 		var content genai.Content
-		if err := bson.Unmarshal(bytes, &content); err != nil {
+		if err := mongo.Unmarshal(bytes, &content); err != nil {
 			return nil, fmt.Errorf("unmarshal content: %w", err)
 		}
 		e.LLMResponse.Content = &content
@@ -384,12 +383,12 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 
 	// 3. 处理 GroundingMetadata
 	if d.GroundingMetadata != nil {
-		bytes, err := bson.Marshal(d.GroundingMetadata)
+		bytes, err := mongo.Marshal(d.GroundingMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("marshal grounding: %w", err)
 		}
 		var gm genai.GroundingMetadata
-		if err := bson.Unmarshal(bytes, &gm); err != nil {
+		if err := mongo.Unmarshal(bytes, &gm); err != nil {
 			return nil, fmt.Errorf("unmarshal grounding: %w", err)
 		}
 		e.LLMResponse.GroundingMetadata = &gm
@@ -397,12 +396,12 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 
 	// 4. 处理 CustomMetadata (map[string]any)
 	if d.CustomMetadata != nil {
-		bytes, err := bson.Marshal(d.CustomMetadata)
+		bytes, err := mongo.Marshal(d.CustomMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("marshal custom meta: %w", err)
 		}
 		var cm map[string]any
-		if err := bson.Unmarshal(bytes, &cm); err != nil {
+		if err := mongo.Unmarshal(bytes, &cm); err != nil {
 			return nil, fmt.Errorf("unmarshal custom meta: %w", err)
 		}
 		e.LLMResponse.CustomMetadata = cm
@@ -410,12 +409,12 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 
 	// 5. 处理 UsageMetadata
 	if d.UsageMetadata != nil {
-		bytes, err := bson.Marshal(d.UsageMetadata)
+		bytes, err := mongo.Marshal(d.UsageMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("marshal usage: %w", err)
 		}
 		var um genai.GenerateContentResponseUsageMetadata
-		if err := bson.Unmarshal(bytes, &um); err != nil {
+		if err := mongo.Unmarshal(bytes, &um); err != nil {
 			return nil, fmt.Errorf("unmarshal usage: %w", err)
 		}
 		e.LLMResponse.UsageMetadata = &um
@@ -423,12 +422,12 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 
 	// 6. 处理 CitationMetadata
 	if d.CitationMetadata != nil {
-		bytes, err := bson.Marshal(d.CitationMetadata)
+		bytes, err := mongo.Marshal(d.CitationMetadata)
 		if err != nil {
 			return nil, fmt.Errorf("marshal citation: %w", err)
 		}
 		var cm genai.CitationMetadata
-		if err := bson.Unmarshal(bytes, &cm); err != nil {
+		if err := mongo.Unmarshal(bytes, &cm); err != nil {
 			return nil, fmt.Errorf("unmarshal citation: %w", err)
 		}
 		e.LLMResponse.CitationMetadata = &cm
