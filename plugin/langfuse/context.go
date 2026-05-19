@@ -1,6 +1,10 @@
 package langfuse
 
-import "context"
+import (
+	"context"
+
+	oteltrace "go.opentelemetry.io/otel/trace"
+)
 
 // contextKey is an unexported type used as key for context.WithValue to avoid
 // collisions with keys defined in other packages.
@@ -118,4 +122,19 @@ func TraceNameFromContext(ctx context.Context) string {
 		return v
 	}
 	return ""
+}
+
+// TraceIDFromContext extracts the Langfuse trace ID from the context. Because
+// the Langfuse plugin exports spans via OTLP, Langfuse uses the OpenTelemetry
+// TraceID directly as its trace identifier. This is the same ID visible in the
+// Langfuse UI trace detail page URL.
+//
+// Returns "" if no active span exists in the context or the span has no valid
+// trace ID.
+func TraceIDFromContext(ctx context.Context) string {
+	sc := oteltrace.SpanFromContext(ctx).SpanContext()
+	if !sc.HasTraceID() {
+		return ""
+	}
+	return sc.TraceID().String()
 }
