@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
+
+	"github.com/UnderTreeTech/waterdrop/pkg/log"
 
 	"google.golang.org/genai"
 
@@ -69,10 +70,10 @@ func persistSummary(ctx agent.CallbackContext, summary string, tokenCount int) {
 	keySummary := stateKeyPrefixSummary + ctx.AgentName()
 	keySummarizedAt := stateKeyPrefixSummarizedAt + ctx.AgentName()
 	if err := ctx.State().Set(keySummary, summary); err != nil {
-		slog.Warn("ContextGuard: failed to persist summary", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to persist summary", log.String("error", err.Error()))
 	}
 	if err := ctx.State().Set(keySummarizedAt, tokenCount); err != nil {
-		slog.Warn("ContextGuard: failed to persist token count", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to persist token count", log.String("error", err.Error()))
 	}
 }
 
@@ -101,7 +102,7 @@ func loadContentsAtCompaction(ctx agent.CallbackContext) int {
 func persistContentsAtCompaction(ctx agent.CallbackContext, count int) {
 	key := stateKeyPrefixContentsAtCompaction + ctx.AgentName()
 	if err := ctx.State().Set(key, count); err != nil {
-		slog.Warn("ContextGuard: failed to persist contents count", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to persist contents count", log.String("error", err.Error()))
 	}
 }
 
@@ -110,7 +111,7 @@ func persistContentsAtCompaction(ctx agent.CallbackContext, count int) {
 func persistRealTokens(ctx agent.CallbackContext, tokens int) {
 	key := stateKeyPrefixRealTokens + ctx.AgentName()
 	if err := ctx.State().Set(key, tokens); err != nil {
-		slog.Warn("ContextGuard: failed to persist real token count", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to persist real token count", log.String("error", err.Error()))
 	}
 }
 
@@ -140,7 +141,7 @@ func loadRealTokens(ctx agent.CallbackContext) int {
 func persistLastHeuristic(ctx agent.CallbackContext, tokens int) {
 	key := stateKeyPrefixLastHeuristic + ctx.AgentName()
 	if err := ctx.State().Set(key, tokens); err != nil {
-		slog.Warn("ContextGuard: failed to persist last heuristic", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to persist last heuristic", log.String("error", err.Error()))
 	}
 }
 
@@ -172,10 +173,10 @@ func resetCalibration(ctx agent.CallbackContext) {
 	keyReal := stateKeyPrefixRealTokens + ctx.AgentName()
 	keyHeuristic := stateKeyPrefixLastHeuristic + ctx.AgentName()
 	if err := ctx.State().Set(keyReal, 0); err != nil {
-		slog.Warn("ContextGuard: failed to reset real tokens", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to reset real tokens", log.String("error", err.Error()))
 	}
 	if err := ctx.State().Set(keyHeuristic, 0); err != nil {
-		slog.Warn("ContextGuard: failed to reset last heuristic", "error", err)
+		log.Warn(ctx, "ContextGuard: failed to reset last heuristic", log.String("error", err.Error()))
 	}
 }
 
@@ -217,11 +218,11 @@ func tokenCount(ctx agent.CallbackContext, req *model.LLMRequest) int {
 
 	if realTokens <= 0 {
 		result := int(float64(currentHeuristic) * defaultHeuristicCorrectionFactor)
-		slog.Debug("ContextGuard [tokenCount]: no calibration data, using default factor",
-			"agent", ctx.AgentName(),
-			"heuristic", currentHeuristic,
-			"factor", defaultHeuristicCorrectionFactor,
-			"result", result,
+		log.Debug(ctx, "ContextGuard [tokenCount]: no calibration data, using default factor",
+			log.String("agent", ctx.AgentName()),
+			log.Int("heuristic", currentHeuristic),
+			log.Int("factor", defaultHeuristicCorrectionFactor),
+			log.Int("result", result),
 		)
 		return result
 	}
@@ -248,14 +249,14 @@ func tokenCount(ctx agent.CallbackContext, req *model.LLMRequest) int {
 		result = realTokens
 	}
 
-	slog.Debug("ContextGuard [tokenCount]: calibrated estimate",
-		"agent", ctx.AgentName(),
-		"heuristic", currentHeuristic,
-		"realTokens", realTokens,
-		"lastHeuristic", lastHeuristic,
-		"correction", fmt.Sprintf("%.2f", correction),
-		"calibrated", calibrated,
-		"result", result,
+	log.Debug(ctx, "ContextGuard [tokenCount]: calibrated estimate",
+		log.String("agent", ctx.AgentName()),
+		log.Int("heuristic", currentHeuristic),
+		log.Int("real_tokens", realTokens),
+		log.Int("last_heuristic", lastHeuristic),
+		log.String("correction", fmt.Sprintf("%.2f", correction)),
+		log.Int("calibrated", calibrated),
+		log.Int("result", result),
 	)
 	return result
 }
@@ -342,7 +343,8 @@ func summarize(ctx context.Context, llm model.LLM, contents []*genai.Content, pr
 	var result string
 	for resp, err := range llm.GenerateContent(ctx, req, false) {
 		if err != nil {
-			return "", fmt.Errorf("summarization LLM call failed: %w", err)
+			log.Error(ctx, "summarization LLM call failed", log.String("error", err.Error()))
+			return "", err
 		}
 		if resp != nil && resp.Content != nil {
 			for _, part := range resp.Content.Parts {

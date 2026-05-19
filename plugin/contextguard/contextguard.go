@@ -29,7 +29,7 @@
 package contextguard
 
 import (
-	"log/slog"
+	"github.com/UnderTreeTech/waterdrop/pkg/log"
 
 	"google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
@@ -93,9 +93,9 @@ type Strategy interface {
 type AgentOption func(*agentConfig)
 
 type agentConfig struct {
-	strategy    string
-	maxTurns    int
-	maxTokens   int
+	strategy              string
+	maxTurns              int
+	maxTokens             int
 	maxCompactionAttempts int
 }
 
@@ -168,9 +168,9 @@ func (g *ContextGuard) Add(agentID string, llm model.LLM, opts ...AgentOption) {
 		g.strategies[agentID] = newThresholdStrategy(g.registry, llm, cfg.maxTokens, maxCompactionAttempts)
 	}
 
-	slog.Info("ContextGuard: strategy configured",
-		"agent", agentID,
-		"strategy", g.strategies[agentID].Name(),
+	log.Infof("ContextGuard: strategy configured",
+		log.String("agent", agentID),
+		log.String("strategy", g.strategies[agentID].Name()),
 	)
 }
 
@@ -212,10 +212,10 @@ func (g *contextGuard) beforeModel(ctx agent.CallbackContext, req *model.LLMRequ
 	}
 
 	if err := strategy.Compact(ctx, req); err != nil {
-		slog.Warn("ContextGuard: compaction failed, passing through",
-			"agent", ctx.AgentName(),
-			"strategy", strategy.Name(),
-			"error", err,
+		log.Warn(ctx, "ContextGuard: compaction failed, passing through",
+			log.String("agent", ctx.AgentName()),
+			log.String("strategy", strategy.Name()),
+			log.String("error", err.Error()),
 		)
 	}
 
