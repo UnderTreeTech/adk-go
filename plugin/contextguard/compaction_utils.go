@@ -221,7 +221,7 @@ func tokenCount(ctx agent.CallbackContext, req *model.LLMRequest) int {
 		log.Debug(ctx, "ContextGuard [tokenCount]: no calibration data, using default factor",
 			log.String("agent", ctx.AgentName()),
 			log.Int("heuristic", currentHeuristic),
-			log.Int("factor", defaultHeuristicCorrectionFactor),
+			log.Float64("factor", defaultHeuristicCorrectionFactor),
 			log.Int("result", result),
 		)
 		return result
@@ -252,7 +252,7 @@ func tokenCount(ctx agent.CallbackContext, req *model.LLMRequest) int {
 	log.Debug(ctx, "ContextGuard [tokenCount]: calibrated estimate",
 		log.String("agent", ctx.AgentName()),
 		log.Int("heuristic", currentHeuristic),
-		log.Int("real_tokens", realTokens),
+		log.Int("real_num", realTokens),
 		log.Int("last_heuristic", lastHeuristic),
 		log.String("correction", fmt.Sprintf("%.2f", correction)),
 		log.Int("calibrated", calibrated),
