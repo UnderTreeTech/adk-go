@@ -1,4 +1,4 @@
-package langfuse
+package trace
 
 import (
 	"context"

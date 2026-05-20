@@ -7,9 +7,9 @@ require (
 	github.com/UnderTreeTech/waterdrop v1.3.7-0.20260517145935-6c302732cc38
 	github.com/anthropics/anthropic-sdk-go v1.19.0
 	github.com/aws/aws-sdk-go v1.55.8
+	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
-	github.com/openai/openai-go/v3 v3.16.0
 	github.com/redis/go-redis/v9 v9.17.2
 	go.opentelemetry.io/otel v1.41.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.41.0
@@ -42,7 +42,6 @@ require (
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/safehtml v0.1.0 // indirect
@@ -69,6 +68,7 @@ require (
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/qiniu/qmgo v1.0.6 // indirect
+	github.com/stretchr/objx v0.5.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
