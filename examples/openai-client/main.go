@@ -33,7 +33,7 @@ func main() {
 
 	// 1. Create the OpenAI client
 	//    This is all you need to switch from Gemini to OpenAI
-	llmModel := genaiopenai.New(genaiopenai.Config{
+	llmModel := genaiopenai.New(&genaiopenai.Config{
 		APIKey:    os.Getenv("OPENAI_API_KEY"),
 		BaseURL:   getEnvOrDefault("OPENAI_BASE_URL", ""),
 		ModelName: getEnvOrDefault("MODEL_NAME", "gpt-4o"),
