@@ -18,19 +18,17 @@ import (
 
 // mongoSessionService implements session.Service using Mongo as the backend.
 type mongoSessionService struct {
-	cfg             *mongo.Config
-	db              *mongo.DB
-	NumRecentEvents int
+	cfg *mongo.Config
+	db  *mongo.DB
 }
 
 // NewMongoSessionService creates a new Mongo-backed session service.
-func NewMongoSessionService(cfg *mongo.Config, numRecentEvents int) session.Service {
+func NewMongoSessionService(cfg *mongo.Config) session.Service {
 	db := mongo.Open(cfg)
 
 	return &mongoSessionService{
-		cfg:             cfg,
-		db:              db,
-		NumRecentEvents: numRecentEvents,
+		cfg: cfg,
+		db:  db,
 	}
 }
 
@@ -127,7 +125,7 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 	opFilter := make(map[string]any)
 	opFilter["_sort"] = []string{"-create_time"}
 	if req.NumRecentEvents > 0 {
-		opFilter["_limit"] = int64(m.NumRecentEvents)
+		opFilter["_limit"] = int64(req.NumRecentEvents)
 	}
 	var startTime int64
 	if !req.After.IsZero() {
