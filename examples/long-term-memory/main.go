@@ -21,8 +21,10 @@ import (
 	"log"
 	"os"
 
-	"google.golang.org/adk/agent"
+	"github.com/UnderTreeTech/adk-go/agent"
+	adkAgent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
+	"google.golang.org/adk/model"
 	"google.golang.org/adk/runner"
 	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
@@ -79,11 +81,12 @@ func main() {
 	}
 
 	// Create agent with memory tools
-	rootAgent, err := llmagent.New(llmagent.Config{
-		Name:        "memory_agent",
-		Model:       llmModel,
-		Description: "An agent with long-term memory capabilities.",
-		Instruction: `You are a helpful assistant with access to long-term memory.
+	rootAgent, err := agent.NewLLMAgent(agent.Config{
+		LLMAgentConfig: llmagent.Config{
+			Name:        "memory_agent",
+			Model:       llmModel,
+			Description: "An agent with long-term memory capabilities.",
+			Instruction: `You are a helpful assistant with access to long-term memory.
 
 You have access to these memory tools:
 - search_memory: Search for information from past conversations
@@ -94,8 +97,9 @@ Guidelines:
 2. When a user asks about something they told you before, use search_memory first
 3. Proactively save important information the user shares
 4. Be explicit about what you're remembering or recalling`,
-		Toolsets: []tool.Toolset{
-			memoryToolset,
+			Toolsets: []tool.Toolset{
+				memoryToolset,
+			},
 		},
 	})
 	if err != nil {
@@ -105,9 +109,10 @@ Guidelines:
 	// Create runner with memory service
 	runnr, err := runner.New(runner.Config{
 		AppName:        appName,
-		Agent:          rootAgent,
+		Agent:          rootAgent.Agent,
 		SessionService: sessionService,
 		MemoryService:  pgMemoryService,
+		PluginConfig:   rootAgent.PluginConfig,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create runner: %v", err)
@@ -132,7 +137,7 @@ func runAgent(ctx context.Context, runnr *runner.Runner, sessionID string, input
 	userMsg := genai.NewContentFromText(input, genai.RoleUser)
 
 	var responseText string
-	for event, err := range runnr.Run(ctx, userID, sessionID, userMsg, agent.RunConfig{}) {
+	for event, err := range runnr.Run(ctx, userID, sessionID, userMsg, adkAgent.RunConfig{}) {
 		if err != nil {
 			log.Printf("Error: %v", err)
 			break
@@ -149,8 +154,8 @@ func runAgent(ctx context.Context, runnr *runner.Runner, sessionID string, input
 	return responseText
 }
 
-func getOpenAIModel() *genaiopenai.Model {
-	return genaiopenai.New(genaiopenai.Config{
+func getOpenAIModel() model.LLM {
+	return genaiopenai.New(&genaiopenai.Config{
 		APIKey:    os.Getenv("OPENAI_API_KEY"),
 		BaseURL:   getEnvOrDefault("OPENAI_BASE_URL", "http://localhost:11434/v1"),
 		ModelName: getEnvOrDefault("MODEL_NAME", "qwen3:8b"),
