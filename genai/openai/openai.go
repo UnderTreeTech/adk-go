@@ -20,6 +20,8 @@ import (
 	"google.golang.org/genai"
 )
 
+var PassBackReasoningContentModels = []string{"deepseek-v4"}
+
 type Config struct {
 	ModelName  string
 	APIKey     string
@@ -125,7 +127,6 @@ func (r openAIRequest) MarshalJSON() ([]byte, error) {
 			topLevel[k] = v
 		}
 	}
-
 	return json.MarshalIndent(topLevel, "", "  ")
 }
 
@@ -210,13 +211,13 @@ func (m *openAIModel) convertOpenAIRequest(req *model.LLMRequest) (*openAIReques
 	}
 
 	for _, content := range req.Contents {
-		msgs, err := m.convertGenAIContent(content)
+		msgs, err := m.convertGenAIContent(content, m.name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert content: %w", err)
 		}
 		openaiReq.Messages = append(openaiReq.Messages, msgs...)
 	}
-	log.Infof("+++++++++request msg+++++++++", log.Any("request_msg", openaiReq.Messages))
+
 	if req.Config != nil && len(req.Config.Tools) > 0 {
 		for _, tool := range req.Config.Tools {
 			if tool.FunctionDeclarations != nil {
@@ -253,7 +254,7 @@ func (m *openAIModel) convertOpenAIRequest(req *model.LLMRequest) (*openAIReques
 	return openaiReq, nil
 }
 
-func (m *openAIModel) convertGenAIContent(content *genai.Content) ([]message, error) {
+func (m *openAIModel) convertGenAIContent(content *genai.Content, model string) ([]message, error) {
 	if content == nil || len(content.Parts) == 0 {
 		return nil, nil
 	}
@@ -293,7 +294,11 @@ func (m *openAIModel) convertGenAIContent(content *genai.Content) ([]message, er
 	for _, part := range content.Parts {
 		if part.Text != "" {
 			if part.Thought {
-				reasoningParts = append(reasoningParts, part.Text)
+				for _, prefix := range PassBackReasoningContentModels {
+					if strings.Contains(model, prefix) {
+						reasoningParts = append(reasoningParts, part.Text)
+					}
+				}
 			} else {
 				textParts = append(textParts, part.Text)
 			}

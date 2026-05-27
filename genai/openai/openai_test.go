@@ -149,14 +149,12 @@ func newStreamingTestServer(t *testing.T, chunks []string, finalContent string) 
 // newTestModel creates a model connected to the test server.
 func newTestModel(t *testing.T, server *httptest.Server) model.LLM {
 	t.Helper()
-	llm, err := NewOpenAIModel(context.Background(), "test-model", &ClientConfig{
+	llm := New(&Config{
+		ModelName:  "test-model",
 		APIKey:     "test-api-key",
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
 	})
-	if err != nil {
-		t.Fatalf("failed to create model: %v", err)
-	}
 	return llm
 }
 
@@ -2139,7 +2137,7 @@ func TestConvertContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := m.convertGenAIContent(tt.content)
+			got, err := m.convertGenAIContent(tt.content, m.name)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("convertContent() error = %v, wantErr %v", err, tt.wantErr)
 				return
