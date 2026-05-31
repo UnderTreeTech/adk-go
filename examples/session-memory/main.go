@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/UnderTreeTech/adk-go/agent"
+	"github.com/UnderTreeTech/adk-go/plugin/trace"
 	adkAgent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
 	"google.golang.org/adk/model"
@@ -89,12 +90,15 @@ Be conversational and reference previous parts of the conversation when relevant
 		log.Fatalf("Failed to create agent: %v", err)
 	}
 
+	// Setup noop trace so TraceIDFromContext always works
+	noopCfg, _ := trace.SetupNoop()
+
 	// Create runner with Redis session service
 	runnr, err := runner.New(runner.Config{
 		AppName:        appName,
-		Agent:          rootAgent.Agent,
+		Agent:          rootAgent,
 		SessionService: redisSessionService,
-		PluginConfig:   rootAgent.PluginConfig,
+		PluginConfig:   noopCfg,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create runner: %v", err)

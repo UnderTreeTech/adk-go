@@ -109,10 +109,9 @@ Guidelines:
 	// Create runner with memory service
 	runnr, err := runner.New(runner.Config{
 		AppName:        appName,
-		Agent:          rootAgent.Agent,
+		Agent:          rootAgent,
 		SessionService: sessionService,
 		MemoryService:  pgMemoryService,
-		PluginConfig:   rootAgent.PluginConfig,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create runner: %v", err)

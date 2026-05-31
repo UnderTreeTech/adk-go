@@ -147,10 +147,9 @@ Guidelines:
 	// Create runner with both services
 	runnr, err := runner.New(runner.Config{
 		AppName:        appName,
-		Agent:          rootAgent.Agent,
+		Agent:          rootAgent,
 		SessionService: redisSessionService,
 		MemoryService:  pgMemoryService, // Enables automatic memory persistence
-		PluginConfig:   rootAgent.PluginConfig,
 	})
 	if err != nil {
 		log.Fatalf("Failed to create runner: %v", err)
