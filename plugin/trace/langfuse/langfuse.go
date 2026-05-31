@@ -100,9 +100,9 @@ func Setup(cfg *Config) (runner.PluginConfig, func(context.Context) error, error
 //
 // Returns "" if no active span exists in the context or the span has no valid
 // trace ID.
-func TraceIDFromContext(ctx context.Context) string {
-	return trace.TraceIDFromContext(ctx)
-}
+//func TraceIDFromContext(ctx context.Context) string {
+//	return trace.TraceIDFromContext(ctx)
+//}
 
 // ---------------------------------------------------------------------------
 // langfuseMapper implements trace.AttributeMapper for Langfuse.

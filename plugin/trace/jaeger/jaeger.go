@@ -91,9 +91,9 @@ func Setup(cfg *Config) (runner.PluginConfig, func(context.Context) error, error
 //
 // Returns "" if no active span exists in the context or the span has no valid
 // trace ID.
-func TraceIDFromContext(ctx context.Context) string {
-	return trace.TraceIDFromContext(ctx)
-}
+//func TraceIDFromContext(ctx context.Context) string {
+//	return trace.TraceIDFromContext(ctx)
+//}
 
 // ---------------------------------------------------------------------------
 // jaegerMapper implements trace.AttributeMapper for Jaeger.
@@ -105,10 +105,10 @@ func (m *jaegerMapper) AgentInputKey() string     { return "adk.agent.input" }
 func (m *jaegerMapper) AgentOutputKeys() []string { return []string{"adk.agent.output"} }
 func (m *jaegerMapper) LLMRequestKey() string     { return "gen_ai.request.body" }
 func (m *jaegerMapper) LLMResponseKey() string    { return "gen_ai.response.body" }
-func (m *jaegerMapper) ModelKey() string           { return "gen_ai.request.model" }
-func (m *jaegerMapper) InputTokensKey() string     { return "gen_ai.usage.input_tokens" }
-func (m *jaegerMapper) OutputTokensKey() string    { return "gen_ai.usage.output_tokens" }
-func (m *jaegerMapper) TotalTokensKey() string     { return "gen_ai.usage.total_tokens" }
+func (m *jaegerMapper) ModelKey() string          { return "gen_ai.request.model" }
+func (m *jaegerMapper) InputTokensKey() string    { return "gen_ai.usage.input_tokens" }
+func (m *jaegerMapper) OutputTokensKey() string   { return "gen_ai.usage.output_tokens" }
+func (m *jaegerMapper) TotalTokensKey() string    { return "gen_ai.usage.total_tokens" }
 
 func (m *jaegerMapper) BeforeAgentAttrs(ctx agent.CallbackContext) []attribute.KeyValue {
 	var attrs []attribute.KeyValue
