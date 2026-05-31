@@ -1,4 +1,4 @@
-package contextguard
+package compaction
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/UnderTreeTech/waterdrop/pkg/log"
+
 	"google.golang.org/genai"
 
 	"google.golang.org/adk/agent"
@@ -14,6 +16,11 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/session"
 )
+
+func init() {
+	// Initialize the global logger to prevent nil pointer panics in tests.
+	log.New(nil)
+}
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -66,16 +73,16 @@ func newMockCallbackContext(agentName string) *mockCallbackContext {
 	}
 }
 
-func (m *mockCallbackContext) UserContent() *genai.Content            { return nil }
-func (m *mockCallbackContext) InvocationID() string                   { return "inv-1" }
-func (m *mockCallbackContext) AgentName() string                      { return m.agentName }
-func (m *mockCallbackContext) ReadonlyState() session.ReadonlyState   { return m.state }
-func (m *mockCallbackContext) UserID() string                         { return "user-1" }
-func (m *mockCallbackContext) AppName() string                        { return "test-app" }
-func (m *mockCallbackContext) SessionID() string                      { return m.sessionID }
-func (m *mockCallbackContext) Branch() string                         { return "" }
-func (m *mockCallbackContext) Artifacts() agent.Artifacts             { return &mockArtifacts{} }
-func (m *mockCallbackContext) State() session.State                   { return m.state }
+func (m *mockCallbackContext) UserContent() *genai.Content          { return nil }
+func (m *mockCallbackContext) InvocationID() string                 { return "inv-1" }
+func (m *mockCallbackContext) AgentName() string                    { return m.agentName }
+func (m *mockCallbackContext) ReadonlyState() session.ReadonlyState { return m.state }
+func (m *mockCallbackContext) UserID() string                       { return "user-1" }
+func (m *mockCallbackContext) AppName() string                      { return "test-app" }
+func (m *mockCallbackContext) SessionID() string                    { return m.sessionID }
+func (m *mockCallbackContext) Branch() string                       { return "" }
+func (m *mockCallbackContext) Artifacts() agent.Artifacts           { return &mockArtifacts{} }
+func (m *mockCallbackContext) State() session.State                 { return m.state }
 
 type mockArtifacts struct{}
 

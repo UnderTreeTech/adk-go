@@ -26,7 +26,7 @@
 //	    Agent:        myAgent,
 //	    PluginConfig: guard.PluginConfig(),
 //	})
-package contextguard
+package compaction
 
 import (
 	"github.com/UnderTreeTech/waterdrop/pkg/log"
@@ -36,6 +36,9 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/plugin"
 	"google.golang.org/adk/runner"
+
+	"charm.land/catwalk/pkg/catwalk"
+	"charm.land/catwalk/pkg/embedded"
 )
 
 const (
@@ -247,4 +250,69 @@ func (g *contextGuard) afterModel(ctx agent.CallbackContext, resp *model.LLMResp
 		persistRealTokens(ctx, promptTokens)
 	}
 	return nil, nil
+}
+
+// ModelRegistry provides model metadata needed by the ContextGuard plugin.
+// Implementations can fetch data from a remote source, a local config, or
+// a static map — the plugin only depends on this interface.
+type ModelRegistry interface {
+	// ContextWindow returns the maximum context window size (in tokens) for
+	// the given model ID. If the model is unknown, a reasonable default
+	// should be returned (e.g. 128000).
+	ContextWindow(modelID string) int
+
+	// DefaultMaxTokens returns the default maximum output tokens for the
+	// given model ID. If the model is unknown, a reasonable default should
+	// be returned (e.g. 4096).
+	DefaultMaxTokens(modelID string) int
+}
+
+const (
+	crushDefaultCtxWindow = 128000
+	crushDefaultMaxTokens = 4096
+)
+
+// CrushRegistry implements ModelRegistry using catwalk's embedded model
+// database. All model metadata (context windows, max tokens, costs) is
+// compiled into the binary — no network calls, no background goroutines.
+//
+// Usage:
+//
+//	registry := contextguard.NewCrushRegistry()
+//	guard := contextguard.New(registry)
+type CrushRegistry struct {
+	models map[string]catwalk.Model
+}
+
+// NewCrushRegistry creates a registry pre-loaded with every model from
+// catwalk's embedded provider database.
+func NewCrushRegistry() *CrushRegistry {
+	models := make(map[string]catwalk.Model)
+	for _, provider := range embedded.GetAll() {
+		for _, m := range provider.Models {
+			models[m.ID] = m
+		}
+	}
+
+	log.Infof("CrushRegistry: loaded models from catwalk", log.Int("count", len(models)))
+
+	return &CrushRegistry{models: models}
+}
+
+// ContextWindow returns the context window size (in tokens) for the given
+// model ID. Returns 128000 if the model is not found.
+func (r *CrushRegistry) ContextWindow(modelID string) int {
+	if m, ok := r.models[modelID]; ok && m.ContextWindow > 0 {
+		return int(m.ContextWindow)
+	}
+	return crushDefaultCtxWindow
+}
+
+// DefaultMaxTokens returns the default max output tokens for the given
+// model ID. Returns 4096 if the model is not found.
+func (r *CrushRegistry) DefaultMaxTokens(modelID string) int {
+	if m, ok := r.models[modelID]; ok && m.DefaultMaxTokens > 0 {
+		return int(m.DefaultMaxTokens)
+	}
+	return crushDefaultMaxTokens
 }

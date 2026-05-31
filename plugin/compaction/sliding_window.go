@@ -1,4 +1,4 @@
-package contextguard
+package compaction
 
 import (
 	"sync"

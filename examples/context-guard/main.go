@@ -36,7 +36,7 @@ import (
 	"google.golang.org/genai"
 
 	genaianthropic "github.com/UnderTreeTech/adk-go/genai/anthropic"
-	"github.com/UnderTreeTech/adk-go/plugin/contextguard"
+	"github.com/UnderTreeTech/adk-go/plugin/compaction"
 )
 
 func main() {
@@ -50,7 +50,7 @@ func main() {
 
 	// 1. Create the model registry — uses catwalk's embedded database,
 	//    no network calls needed.
-	registry := contextguard.NewCrushRegistry()
+	registry := compaction.NewCrushRegistry()
 
 	fmt.Printf("Context window for %s: %d tokens\n", modelName, registry.ContextWindow(modelName))
 
@@ -72,18 +72,18 @@ func main() {
 	}
 
 	// 4. Configure ContextGuard — pick strategy based on env vars
-	guard := contextguard.New(registry)
+	guard := compaction.New(registry)
 
 	strategy := getEnvOrDefault("STRATEGY", "threshold")
 	switch strategy {
 	case "sliding_window":
 		maxTurns := getEnvInt("MAX_TURNS", 20)
-		guard.Add("assistant", llmModel, contextguard.WithSlidingWindow(maxTurns))
+		guard.Add("assistant", llmModel, compaction.WithSlidingWindow(maxTurns))
 		fmt.Printf("Strategy: sliding_window (max %d turns)\n", maxTurns)
 
 	default:
 		if maxTokens := getEnvInt("MAX_TOKENS", 0); maxTokens > 0 {
-			guard.Add("assistant", llmModel, contextguard.WithMaxTokens(maxTokens))
+			guard.Add("assistant", llmModel, compaction.WithMaxTokens(maxTokens))
 			fmt.Printf("Strategy: threshold (manual override: %d tokens)\n", maxTokens)
 		} else {
 			guard.Add("assistant", llmModel)
