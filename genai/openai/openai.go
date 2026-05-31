@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/UnderTreeTech/waterdrop/pkg/log"
 	"github.com/google/uuid"
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
@@ -36,6 +35,7 @@ type openAIModel struct {
 	httpClient *http.Client
 }
 
+// New creates an OpenAI client from config (API key, base URL, model name).
 func New(config *Config) model.LLM {
 	httpClient := config.HTTPClient
 
@@ -249,8 +249,6 @@ func (m *openAIModel) convertOpenAIRequest(req *model.LLMRequest) (*openAIReques
 		}
 	}
 
-	openaiReq.StreamOptions = &streamOptions{IncludeUsage: true}
-
 	return openaiReq, nil
 }
 
@@ -428,6 +426,7 @@ func (m *openAIModel) generate(ctx context.Context, openaiReq *openAIRequest) it
 
 func (m *openAIModel) generateStream(ctx context.Context, openaiReq *openAIRequest) iter.Seq2[*model.LLMResponse, error] {
 	openaiReq.Stream = true
+	openaiReq.StreamOptions = &streamOptions{IncludeUsage: true}
 
 	return func(yield func(*model.LLMResponse, error) bool) {
 		httpResp, err := m.sendRequest(ctx, openaiReq)
