@@ -39,6 +39,7 @@ package agent
 import (
 	"fmt"
 
+	"github.com/UnderTreeTech/adk-go/plugin/trace"
 	"github.com/UnderTreeTech/waterdrop/pkg/log"
 	adkagent "google.golang.org/adk/agent"
 	"google.golang.org/adk/agent/llmagent"
@@ -48,6 +49,7 @@ import (
 	"google.golang.org/adk/model"
 	"google.golang.org/adk/plugin"
 	"google.golang.org/adk/runner"
+	"google.golang.org/adk/tool"
 
 	"github.com/UnderTreeTech/adk-go/plugin/contextguard"
 )
@@ -196,7 +198,14 @@ func buildPlugins(cfg Config) ([]*plugin.Plugin, error) {
 		allPlugins = append(allPlugins, cfg.JaegerPluginConfig.Plugins...)
 	}
 
-	// 3. ContextGuard plugin — create per-agent instance.
+	// 3. Noop trace plugin — when no trace backend is configured, initialise
+	// a noop TracerProvider so that TraceIDFromContext always returns a valid ID.
+	if cfg.LangfusePluginConfig == nil && cfg.JaegerPluginConfig == nil {
+		noopCfg, _ := trace.SetupNoop()
+		allPlugins = append(allPlugins, noopCfg.Plugins...)
+	}
+
+	// 4. ContextGuard plugin — create per-agent instance.
 	if cfg.ContextGuard != nil {
 		guardPlugins, err := buildContextGuardPlugins(cfg.LLMAgentConfig.Name, cfg.LLMAgentConfig.Model, cfg.ContextGuard)
 		if err != nil {
@@ -222,6 +231,24 @@ func buildPlugins(cfg Config) ([]*plugin.Plugin, error) {
 //     ensures clean separation of strategy objects and model registry lookups.
 //   - ContextGuard defaults to the sliding_window strategy with 20 turns.
 func NewLLMAgent(cfg Config) (*BundledAgent, error) {
+	// 0. Prepend default log callbacks so they always fire first.
+	cfg.LLMAgentConfig.BeforeModelCallbacks = append(
+		[]llmagent.BeforeModelCallback{LogBeforeModelCallback},
+		cfg.LLMAgentConfig.BeforeModelCallbacks...,
+	)
+	cfg.LLMAgentConfig.AfterModelCallbacks = append(
+		[]llmagent.AfterModelCallback{LogAfterModelCallback},
+		cfg.LLMAgentConfig.AfterModelCallbacks...,
+	)
+	cfg.LLMAgentConfig.BeforeToolCallbacks = append(
+		[]llmagent.BeforeToolCallback{LogBeforeToolCallback},
+		cfg.LLMAgentConfig.BeforeToolCallbacks...,
+	)
+	cfg.LLMAgentConfig.AfterToolCallbacks = append(
+		[]llmagent.AfterToolCallback{LogAfterToolCallback},
+		cfg.LLMAgentConfig.AfterToolCallbacks...,
+	)
+
 	// 1. Create the upstream LLM agent.
 	ag, err := llmagent.New(cfg.LLMAgentConfig)
 	if err != nil {
@@ -338,4 +365,50 @@ func NewSequentialAgent(cfg Config) (*BundledAgent, error) {
 			Plugins: allPlugins,
 		},
 	}, nil
+}
+
+// LogBeforeModelCallback 打印模型调用前输入
+func LogBeforeModelCallback(ctx adkagent.CallbackContext, llmRequest *model.LLMRequest) (*model.LLMResponse, error) {
+	log.Debug(ctx, "model request info",
+		log.String("trace_id", trace.TraceIDFromContext(ctx)),
+		log.String("invocation_id", ctx.InvocationID()),
+		log.Any("system_instruction", llmRequest.Config.SystemInstruction),
+		log.Any("content", llmRequest.Contents),
+		log.String("model", llmRequest.Model),
+	)
+	return nil, nil
+}
+
+// LogAfterModelCallback 打印模型调用后输入
+func LogAfterModelCallback(ctx adkagent.CallbackContext, llmResponse *model.LLMResponse, llmResponseError error) (*model.LLMResponse, error) {
+	log.Debug(ctx, "model call reply",
+		log.String("jaeger_trace_id", trace.TraceIDFromContext(ctx)),
+		log.String("invocation_id", ctx.InvocationID()),
+		log.Any("model_reply", llmResponse),
+	)
+	return nil, nil
+}
+
+// LogAfterToolCallback 打印工具调用结束日志
+func LogAfterToolCallback(ctx tool.Context, t tool.Tool, args, result map[string]any, err error) (map[string]any, error) {
+	log.Debug(ctx, "tool call reply info",
+		log.String("name", t.Name()),
+		log.String("description", t.Description()),
+		log.Any("args", args),
+		log.Any("result", result),
+	)
+	if err != nil {
+		log.Error(ctx, "❌:tool call fail", log.String("error", err.Error()))
+	}
+	return result, err
+}
+
+// LogBeforeToolCallback 打印工具调用前日志
+func LogBeforeToolCallback(ctx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+	log.Debug(ctx, "tool call request info",
+		log.String("name", t.Name()),
+		log.String("description", t.Description()),
+		log.Any("args", args),
+	)
+	return nil, nil
 }
