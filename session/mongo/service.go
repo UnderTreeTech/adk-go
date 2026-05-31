@@ -147,7 +147,7 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 	for _, e := range evs {
 		ev, uerr := unmarshalEventToAdkEvent(e)
 		if uerr != nil {
-			log.Error(ctx, "unmarshalEventToAdkEvent fail", log.String("error", err.Error()))
+			log.Error(ctx, "unmarshalEventToAdkEvent fail", log.String("error", uerr.Error()))
 			continue
 		}
 		adkEvents = append(adkEvents, ev)
@@ -227,13 +227,20 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 		return fmt.Errorf("unexpected session type %T", ms)
 	}
 
+	// 1. Update in-memory session first (matches official database session order)
+	if err := ms.appendEvent(event); err != nil {
+		return err
+	}
+
+	// 2. Trim temp state before persisting to DB
+	event = trimTempDeltaState(event)
+
+	// 3. Persist to DB
 	session, err := m.findSessionById(ctx, curSession.ID())
 	if err != nil {
 		return err
 	}
 
-	// fetch完整状态逻辑：
-	event = trimTempDeltaState(event)
 	sessionState := session.State
 	// fetch完整状态逻辑：
 	as, err := m.fetchAppState(ctx, session.AgentID)
@@ -278,9 +285,9 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 		return err
 	}
 
+	// 4. Update local session last update time
 	ms.updatedAt = event.Timestamp
-	// 成功后更新内存状态
-	return ms.appendEvent(event)
+	return nil
 }
 
 func (m *mongoSessionService) fetchAppState(ctx context.Context, agentId string) (map[string]any, error) {
@@ -654,7 +661,7 @@ func (m *mongoSessionService) removeSessionById(ctx context.Context, sessionId s
 	}
 	setCond := mongo.M{
 		"$set": mongo.M{
-			"deleted":     0,
+			"deleted":     1,
 			"update_time": xtime.Now().CurrentUnixTime(),
 		},
 	}

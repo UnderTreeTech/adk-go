@@ -52,12 +52,12 @@ func (s *mongoSession) appendEvent(event *session.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	processedEvent := trimTempDeltaState(event)
-	if err := updateSessionState(s, processedEvent); err != nil {
-		return fmt.Errorf("failed to update localSession state: %w", err)
+	if err := updateSessionState(s, event); err != nil {
+		return fmt.Errorf("failed to update mongoSession state: %w", err)
 	}
 
-	s.events = append(s.events, event)
+	processedEvent := trimTempDeltaState(event)
+	s.events = append(s.events, processedEvent)
 	s.updatedAt = event.Timestamp
 	return nil
 }
@@ -89,18 +89,20 @@ func (s *state) Set(key string, val any) error {
 }
 
 func (s *state) All() iter.Seq2[string, any] {
-	return func(yield func(key string, val any) bool) {
-		s.mu.RLock()
+	s.mu.RLock()
+	// Create a copy of the state to iterate over it without holding the lock.
+	stateCopy := make(map[string]any, len(s.state))
+	for k, v := range s.state {
+		stateCopy[k] = v
+	}
+	s.mu.RUnlock()
 
-		for k, v := range s.state {
-			s.mu.RUnlock()
+	return func(yield func(key string, val any) bool) {
+		for k, v := range stateCopy {
 			if !yield(k, v) {
 				return
 			}
-			s.mu.RLock()
 		}
-
-		s.mu.RUnlock()
 	}
 }
 
