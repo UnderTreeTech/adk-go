@@ -291,8 +291,6 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 }
 
 func (m *mongoSessionService) fetchAppState(ctx context.Context, agentId string) (map[string]any, error) {
-	return nil, nil
-
 	as, err := m.findAppState(ctx, agentId)
 	if err != nil {
 		if mongo.IsErrNoDocuments(err) {
@@ -304,8 +302,6 @@ func (m *mongoSessionService) fetchAppState(ctx context.Context, agentId string)
 }
 
 func (m *mongoSessionService) fetchUserState(ctx context.Context, userId, agentId string) (map[string]any, error) {
-	return nil, nil
-
 	us, err := m.findUserState(ctx, userId, agentId)
 	if err != nil {
 		if mongo.IsErrNoDocuments(err) {
