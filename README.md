@@ -1,424 +1,374 @@
-# ADK Go
+# adk-go
 
-Utilities and implementations for [Google's Agent Development Kit (ADK)](https://google.github.io/adk-docs/) in Go.
+[![Go](https://img.shields.io/badge/Go-1.25+-blue.svg)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](LICENSE)
 
-## Acknowledgments / 致谢
+**adk-go** 是基于 [Google ADK (Agent Development Kit)](https://google.golang.org/adk) 的增强扩展库，为构建生产级 AI Agent 应用提供开箱即用的多模型接入、可观测性、会话管理、记忆持久化与上下文窗口管理能力。
 
-This project is built upon and inspired by the following excellent open-source projects:
-- [google/adk-go](https://github.com/google/adk-go)
-- [achetronic/adk-utils-go](https://github.com/achetronic/adk-utils-go)
+## ✨ 核心特性
 
-We have further encapsulated these projects to simplify the agent development process and provide a general-purpose agent development scaffold.
+- **多模型适配** — 内置 OpenAI 兼容协议与 Anthropic Claude 的 LLM 适配器，支持 DeepSeek、Ollama 等任意 OpenAI 兼容服务
+- **统一 Agent 工厂** — 一站式创建 LLMAgent、SequentialAgent、ParallelAgent、LoopAgent，自动整合插件配置
+- **上下文窗口守护 (ContextGuard)** — 自动防止对话超出模型上下文窗口，支持滑动窗口与 Token 阈值两种压缩策略
+- **可观测性插件** — 集成 Jaeger 与 Langfuse 的 OpenTelemetry 链路追踪，记录 LLM 请求/响应、Token 用量
+- **会话持久化** — Redis 会话服务实现，支持 App/User/Session 三级状态隔离与 TTL 过期管理
+- **长期记忆** — PostgreSQL + pgvector 向量记忆服务，支持语义搜索与全文检索双模式
+- **实用工具集** — 文件生成工具、记忆 CRUD 工具集、安全 Toolset 包装器
+- **Artifact 存储** — 支持本地磁盘与 S3 兼容对象存储的文件产物管理
 
-本项目基于上述两个优秀的开源项目进行进一步封装，旨在简化 AGENT 开发流程，并提供通用的 AGENT 开发脚手架。特此致谢！
-
-This repository provides production-ready implementations for:
-
-- **LLM Clients**: OpenAI and Anthropic clients compatible with ADK
-- **Session Management**: Redis-based session persistence
-- **Long-term Memory**: PostgreSQL + pgvector for semantic search
-- **Memory Tools**: Toolsets for agent-controlled memory operations
-- **Artifact Storage**: Filesystem-based artifact persistence with versioning
-- **Context Guard**: Automatic context window management with LLM-powered summarization
-- **Langfuse**: Observability plugin — traces every LLM call to [Langfuse](https://langfuse.com) with full prompt/response payloads and token usage
-
-## Structure
+## 📦 项目结构
 
 ```
-├── genai/            # LLM client implementations
-│   ├── openai/       # OpenAI client (works with Ollama, OpenRouter, etc.)
-│   └── anthropic/    # Anthropic Claude client
-├── session/          # Session service implementations
-│   └── redis/        # Redis session service
-├── memory/           # Memory service implementations
-│   └── postgres/     # PostgreSQL + pgvector memory service
-├── tools/            # Tool and toolset implementations
-│   └── memory/       # Memory toolset for agents
-├── artifact/         # Artifact service implementations
-│   └── filesystem/   # Filesystem artifact service (versioned, user-scoped)
-├── plugin/           # ADK plugin implementations
-│   ├── contextguard/ # Context window management plugin + CrushRegistry
-│   └── langfuse/     # Langfuse observability plugin (OTLP/HTTP traces)
-└── examples/         # Working examples
+adk-go/
+├── agent/                     # 统一 Agent 工厂（LLM/Sequential/Parallel/Loop）
+├── artifact/                  # Artifact 存储配置与服务
+│   ├── diskstorage/           # 本地磁盘存储实现
+│   └── s3/                    # S3 兼容对象存储实现
+├── genai/                     # LLM 模型适配器
+│   ├── openai/                # OpenAI 兼容协议适配器
+│   └── anthropic/             # Anthropic Claude SDK 适配器
+├── plugin/                    # ADK 插件
+│   ├── contextguard/          # 上下文窗口管理插件
+│   └── trace/                 # 链路追踪基础框架
+│       ├── jaeger/            # Jaeger 集成
+│       └── langfuse/          # Langfuse 集成
+├── session/                   # 会话服务
+│   ├── redis/                 # Redis 会话持久化
+│   └── mongo/                 # MongoDB 会话持久化
+├── memory/                    # 长期记忆服务
+│   └── postgres/              # PostgreSQL + pgvector 实现
+├── tools/                     # 实用工具
+│   ├── memory/                # 记忆 CRUD 工具集
+│   ├── filegentool/           # 文件生成工具
+│   ├── safetoolset/           # 安全 Toolset 包装器
+│   └── appendfiletool/        # 文件追加工具
+├── prompt/                    # 全局提示词模板
+├── examples/                  # 示例应用
+│   ├── todo-agent/            # Todo Agent 完整示例
+│   ├── anthropic-client/      # Anthropic 客户端示例
+│   ├── openai-client/         # OpenAI 客户端示例
+│   ├── context-guard/         # ContextGuard 示例
+│   ├── session-memory/        # 会话记忆示例
+│   ├── long-term-memory/      # 长期记忆示例
+│   ├── full-memory/           # 完整记忆系统示例
+│   ├── llmagent-jaeger/       # Jaeger 追踪示例
+│   ├── llmagent-langfuse/     # Langfuse 追踪示例
+│   └── agents/                # 多 Agent 编排示例
+│       └── sequentialagent/   # 顺序执行 Agent 示例
+└── docs/                      # 设计文档
 ```
 
-## Installation
+## 🚀 快速开始
+
+### 安装
 
 ```bash
 go get github.com/UnderTreeTech/adk-go
 ```
 
-## LLM Clients
-
-### OpenAI Client
-
-Works with OpenAI API and any OpenAI-compatible API (Ollama, OpenRouter, Azure OpenAI, etc.):
+### 基本用法 — 创建 LLM Agent
 
 ```go
-import genaiopenai "github.com/UnderTreeTech/adk-go/genai/openai"
+package main
 
-llmModel := genaiopenai.New(genaiopenai.Config{
-    APIKey:    os.Getenv("OPENAI_API_KEY"),
-    BaseURL:   "http://localhost:11434/v1", // For Ollama
-    ModelName: "gpt-4o",                     // Or "qwen3:8b" for Ollama
-})
+import (
+    "context"
+    "fmt"
+    "os"
 
-agent, _ := llmagent.New(llmagent.Config{
-    Name:  "assistant",
-    Model: llmModel,
-})
+    "github.com/UnderTreeTech/adk-go/agent"
+    "github.com/UnderTreeTech/adk-go/genai/openai"
+    adkAgent "google.golang.org/adk/agent"
+    "google.golang.org/adk/agent/llmagent"
+    "google.golang.org/adk/cmd/launcher"
+    "google.golang.org/adk/cmd/launcher/full"
+)
+
+func main() {
+    ctx := context.Background()
+
+    // 1. 创建 LLM 模型
+    llm := openai.New(&openai.Config{
+        APIKey:    os.Getenv("OPENAI_API_KEY"),
+        BaseURL:   os.Getenv("OPENAI_BASE_URL"),
+        ModelName: "gpt-4o",
+    })
+
+    // 2. 创建 Agent（自动集成插件）
+    a, err := agent.NewLLMAgent(agent.Config{
+        LLMAgentConfig: llmagent.Config{
+            Name:        "my_agent",
+            Model:       llm,
+            Description: "A helpful assistant",
+            Instruction: "You are a helpful assistant.",
+        },
+        ContextGuard: &agent.ContextGuardConfig{
+            Strategy: agent.StrategySlidingWindow,
+            MaxTurns: 30,
+        },
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    // 3. 启动
+    l := full.NewLauncher()
+    config := &launcher.Config{
+        AgentLoader:  adkAgent.NewSingleLoader(a.Agent),
+        PluginConfig: a.PluginConfig,
+    }
+    if err = l.Execute(ctx, config, os.Args[1:]); err != nil {
+        fmt.Printf("Run failed: %v\n", err)
+    }
+}
 ```
 
-### Anthropic Client
+## 🔌 多模型支持
 
-Native Anthropic Claude support:
+### OpenAI 兼容协议
 
-```go
-import genaianthropic "github.com/UnderTreeTech/adk-go/genai/anthropic"
-
-llmModel := genaianthropic.New(genaianthropic.Config{
-    APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-    ModelName: "claude-sonnet-4-5-20250929",
-})
-
-agent, _ := llmagent.New(llmagent.Config{
-    Name:  "assistant",
-    Model: llmModel,
-})
-```
-
-#### Extended Thinking
-
-Claude can generate an internal reasoning chain before producing its final response. Thinking tokens are **output tokens** — Claude writes the reasoning as text (it just isn't shown to the user). Set `ThinkingBudgetTokens` to reserve a portion of the output budget for this reasoning. The remaining tokens (`MaxOutputTokens - ThinkingBudgetTokens`) are available for the final response.
+支持任何 OpenAI Chat Completions API 兼容的服务（OpenAI、DeepSeek、Ollama、vLLM 等）：
 
 ```go
-llmModel := genaianthropic.New(genaianthropic.Config{
-    APIKey:               os.Getenv("ANTHROPIC_API_KEY"),
-    ModelName:            "claude-sonnet-4-5-20250929",
-    MaxOutputTokens:      16000,
-    ThinkingBudgetTokens: 10000, // must be >= 1024 and < MaxOutputTokens
-})
-```
-
-### Custom HTTP Headers
-
-Both clients support custom HTTP headers via `HTTPOptions`, useful for beta features, auth proxies, or provider-specific flags:
-
-```go
-import "net/http"
-
-llmModel := genaianthropic.New(genaianthropic.Config{
-    APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
-    ModelName: "claude-sonnet-4-6-20250929",
-    HTTPOptions: genaianthropic.HTTPOptions{
-        Headers: http.Header{
-            "anthropic-beta": []string{"context-1m-2025-08-07"},
+llm := openai.New(&openai.Config{
+    APIKey:    "your-api-key",
+    BaseURL:   "https://api.deepseek.com",
+    ModelName: "deepseek-v4",
+    ExtraBody: map[string]any{
+        "extra_body": map[string]any{
+            "thinking": map[string]any{"type": "disabled"},
         },
     },
 })
 ```
 
-### Supported Features
+特性：
+- 流式/非流式响应
+- 函数调用 (Function Calling)
+- 多模态输入（图片、视频、音频、PDF）
+- 推理内容 (Reasoning Content) 透传
+- Token 用量统计
+- 自定义 HTTP 客户端
 
-Both clients support:
+### Anthropic Claude
 
-- Streaming and non-streaming responses
-- System instructions
-- Tool/function calling
-- Image inputs (base64)
-- Temperature, TopP, MaxOutputTokens, StopSequences
-- Extended thinking (`ThinkingBudgetTokens`)
-- Usage metadata
-- Custom HTTP headers (multi-value)
-
-## Session Service (Redis)
-
-Persistent session storage with Redis:
+使用官方 Anthropic SDK，支持完整的 Claude API 能力：
 
 ```go
-import sessionredis "github.com/UnderTreeTech/adk-go/session/redis"
+model := anthropic.New(anthropic.Config{
+    APIKey:               "your-api-key",
+    ModelName:            "claude-sonnet-4-5-20250929",
+    MaxOutputTokens:      8192,
+    ThinkingBudgetTokens: 4096, // 启用 Extended Thinking
+})
+```
 
-sessionService, _ := sessionredis.NewRedisSessionService(sessionredis.RedisSessionServiceConfig{
+特性：
+- 流式/非流式响应
+- 函数调用
+- 图片、PDF、文本文档输入
+- Extended Thinking 支持
+- 消息历史自动修复（孤立 tool_use 清理）
+
+## 🛡️ ContextGuard — 上下文窗口管理
+
+ContextGuard 插件在每次模型调用前自动检测并压缩对话历史，防止超出上下文窗口限制。
+
+### 滑动窗口策略
+
+当对话轮次超过阈值时触发压缩：
+
+```go
+agent.Config{
+    ContextGuard: &agent.ContextGuardConfig{
+        Strategy: agent.StrategySlidingWindow,
+        MaxTurns: 30, // 超过 30 轮时压缩
+    },
+}
+```
+
+### Token 阈值策略
+
+当估算 Token 数接近模型上下文窗口时触发压缩：
+
+```go
+agent.Config{
+    ContextGuard: &agent.ContextGuardConfig{
+        Strategy:  agent.StrategyThreshold,
+        MaxTokens: 128000, // 可选，默认从 ModelRegistry 查询
+    },
+}
+```
+
+## 📡 可观测性
+
+### Jaeger 集成
+
+```go
+import "github.com/UnderTreeTech/adk-go/plugin/trace/jaeger"
+
+jaegerCfg, shutdown, err := jaeger.Setup(&jaeger.Config{
+    Endpoint:    "http://localhost:4318/v1/traces",
+    ServiceName: "my-agent",
+    Environment: "production",
+    Insecure:    true,
+})
+defer shutdown(ctx)
+
+a, _ := agent.NewLLMAgent(agent.Config{
+    // ...
+    JaegerPluginConfig: &jaegerCfg,
+})
+```
+
+### Langfuse 集成
+
+```go
+import "github.com/UnderTreeTech/adk-go/plugin/trace/langfuse"
+
+langfuseCfg, shutdown, err := langfuse.Setup(&langfuse.Config{
+    PublicKey: os.Getenv("LANGFUSE_PUBLIC_KEY"),
+    SecretKey: os.Getenv("LANGFUSE_SECRET_KEY"),
+    Host:      "https://cloud.langfuse.com",
+})
+defer shutdown(ctx)
+
+a, _ := agent.NewLLMAgent(agent.Config{
+    // ...
+    LangfusePluginConfig: &langfuseCfg,
+})
+```
+
+两种追踪后端均自动捕获：
+- Agent 输入/输出
+- LLM 请求/响应完整内容
+- 模型名称与 Token 用量
+- 工具调用参数与结果
+- 多 Agent 编排的完整调用链
+
+## 💾 会话管理
+
+### Redis 会话服务
+
+```go
+import "github.com/UnderTreeTech/adk-go/session/redis"
+
+sessionSvc, err := redis.NewRedisSessionService(redis.RedisSessionServiceConfig{
     Addr:     "localhost:6379",
     Password: "",
     DB:       0,
     TTL:      24 * time.Hour,
 })
-defer sessionService.Close()
+```
 
-runner, _ := runner.New(runner.Config{
-    SessionService: sessionService,
+特性：
+- App / User / Session 三级状态隔离
+- 独立 TTL 配置
+- 事件持久化与过滤查询
+- `temp:` 前缀的临时状态自动清理
+
+## 🧠 长期记忆
+
+### PostgreSQL + pgvector
+
+```go
+import "github.com/UnderTreeTech/adk-go/memory/postgres"
+
+memorySvc, err := postgres.NewPostgresMemoryService(ctx, postgres.PostgresMemoryServiceConfig{
+    ConnString:     "postgres://user:pass@localhost:5432/mydb?sslmode=disable",
+    EmbeddingModel: myEmbeddingModel, // 可选，支持语义搜索
 })
 ```
 
-## Memory Service (PostgreSQL + pgvector)
+### 记忆工具集
 
-Long-term memory with semantic search:
+将记忆能力作为工具暴露给 Agent：
 
 ```go
-import memorypostgres "github.com/UnderTreeTech/adk-go/memory/postgres"
+import memtools "github.com/UnderTreeTech/adk-go/tools/memory"
 
-memoryService, _ := memorypostgres.NewPostgresMemoryService(ctx, memorypostgres.PostgresMemoryServiceConfig{
-    ConnString: "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable",
-    EmbeddingModel: memorypostgres.NewOpenAICompatibleEmbedding(memorypostgres.OpenAICompatibleEmbeddingConfig{
-        BaseURL: "http://localhost:11434/v1",
-        Model:   "nomic-embed-text",
-    }),
+toolset, _ := memtools.NewToolset(memtools.ToolsetConfig{
+    MemoryService: memorySvc,
+    AppName:       "my-app",
 })
-defer memoryService.Close()
 
-runner, _ := runner.New(runner.Config{
-    MemoryService: memoryService,
-})
+// 包含以下工具：
+// - search_memory:    搜索长期记忆
+// - save_to_memory:   保存信息到长期记忆
+// - update_memory:    更新记忆条目
+// - delete_memory:    删除记忆条目
 ```
 
-## Memory Toolset
+## 🤖 多 Agent 编排
 
-Give agents explicit control over long-term memory:
+### 顺序执行 Agent
 
 ```go
-import memorytools "github.com/UnderTreeTech/adk-go/tools/memory"
-
-memoryToolset, _ := memorytools.NewToolset(memorytools.ToolsetConfig{
-    MemoryService: memoryService,
-    AppName:       "my_app",
-})
-
-agent, _ := llmagent.New(llmagent.Config{
-    Toolsets: []tool.Toolset{memoryToolset},
+a, _ := agent.NewSequentialAgent(agent.Config{
+    Config: adkAgent.Config{
+        Name:      "pipeline",
+        SubAgents: []adkAgent.Agent{agentA, agentB, agentC},
+    },
 })
 ```
 
-The toolset provides:
-
-- `search_memory`: Semantic search across stored memories
-- `save_to_memory`: Save information for future recall
-
-## Artifact Service (Filesystem)
-
-Versioned artifact storage backed by the local filesystem. Agents can save, load, list, and delete files (code, documents, data) that are delivered to the user as downloadable content.
+### 并行执行 Agent
 
 ```go
-import artifactfs "github.com/UnderTreeTech/adk-go/artifact/filesystem"
-
-artifactService, _ := artifactfs.NewFilesystemService(artifactfs.FilesystemServiceConfig{
-    BasePath: "data/artifacts",
-})
-
-// Use with ADK launcher
-launcherCfg := &launcher.Config{
-    SessionService:  sessionService,
-    AgentLoader:     agentLoader,
-    ArtifactService: artifactService,
-}
-```
-
-Artifacts are stored at `{BasePath}/{appName}/{userID}/{sessionID}/{fileName}/{version}.json`. Filenames prefixed with `user:` are scoped to the user across all sessions, making them accessible from any conversation.
-
-## Langfuse Plugin
-
-Traces every agent invocation and LLM call to [Langfuse](https://langfuse.com) via OTLP/HTTP. Enriches `generate_content` spans with full request/response payloads and token usage so Langfuse can display costs, latency, and prompt/completion content.
-
-Supports all ADK agent topologies: single agents, sequential delegation, SequentialAgent, LoopAgent, and ParallelAgent.
-
-### Setup
-
-```go
-import "github.com/UnderTreeTech/adk-go/plugin/langfuse"
-
-pluginCfg, shutdown, err := langfuse.Setup(&langfuse.Config{
-    PublicKey:   os.Getenv("LANGFUSE_PUBLIC_KEY"),
-    SecretKey:   os.Getenv("LANGFUSE_SECRET_KEY"),
-    Host:        "https://cloud.langfuse.com", // or self-hosted URL
-    Environment: "production",
-    ServiceName: "my-agent",
-})
-if err != nil { log.Fatal(err) }
-defer shutdown(context.Background())
-
-runnr, _ := runner.New(runner.Config{
-    Agent:        myAgent,
-    PluginConfig: pluginCfg,
+a, _ := agent.NewParallelAgent(agent.Config{
+    Config: adkAgent.Config{
+        Name:      "parallel_pipeline",
+        SubAgents: []adkAgent.Agent{agentA, agentB},
+    },
 })
 ```
 
-### Combining with ContextGuard
+### 循环执行 Agent
 
 ```go
-langfuseCfg, shutdown, _ := langfuse.Setup(langfuseCfg)
-guardCfg := guard.PluginConfig()
-
-combined := runner.PluginConfig{
-    Plugins: append(langfuseCfg.Plugins, guardCfg.Plugins...),
-}
-```
-
-### Per-Request Context
-
-Inject per-request attributes via context (typically in HTTP middleware):
-
-```go
-ctx = langfuse.WithUserID(ctx, "user-123")
-ctx = langfuse.WithTags(ctx, []string{"beta", "internal"})
-ctx = langfuse.WithTraceName(ctx, "customer-support")
-ctx = langfuse.WithTraceMetadata(ctx, map[string]string{"tenant": "acme"})
-```
-
-### Config
-
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `PublicKey` | Yes | — | Langfuse project public key (Basic Auth user) |
-| `SecretKey` | Yes | — | Langfuse project secret key (Basic Auth pass) |
-| `Host` | No | `https://cloud.langfuse.com` | Langfuse server URL |
-| `Environment` | No | — | Deployment environment tag |
-| `Release` | No | — | Application version tag |
-| `ServiceName` | No | `langfuse-adk` | OTel `service.name` resource attribute |
-| `Insecure` | No | `false` | Disable TLS for the OTLP/HTTP exporter (for self-hosted plain-HTTP instances) |
-
-Use `cfg.IsEnabled()` to conditionally skip setup when credentials are absent.
-
-## Context Guard Plugin
-
-Automatic context window management that prevents conversations from exceeding the LLM's token limit. It works as an ADK `BeforeModelCallback` plugin — before every LLM call, it checks whether the conversation is approaching the limit and summarizes older messages to make room.
-
-### Strategies
-
-| Strategy | Trigger | Best for |
-|----------|---------|----------|
-| `threshold` | Token count approaches context window limit | Maximizing context usage, models with known limits |
-| `sliding_window` | Turn count exceeds a configured maximum | Predictable compaction, long-running conversations |
-
-### Setup
-
-The plugin requires a `ModelRegistry` to look up context window sizes. A built-in `CrushRegistry` is provided that fetches model metadata from [Crush's provider.json](https://raw.githubusercontent.com/charmbracelet/crush/main/internal/agent/hyper/provider.json) and refreshes every 6 hours:
-
-```go
-import "github.com/UnderTreeTech/adk-go/plugin/contextguard"
-
-// 1. Start the registry (built-in, fetches from Crush)
-registry := contextguard.NewCrushRegistry()
-registry.Start(ctx)
-defer registry.Stop()
-
-// 2. Create the guard and add agents
-guard := contextguard.New(registry)
-guard.Add("assistant", llmModel)
-
-// 3. Pass to ADK runner
-runnr, _ := runner.New(runner.Config{
-    Agent:        myAgent,
-    PluginConfig: guard.PluginConfig(),
+a, _ := agent.NewLoopAgent(agent.Config{
+    Config: adkAgent.Config{
+        Name:      "iterative_pipeline",
+        SubAgents: []adkAgent.Agent{agentA, agentB},
+    },
+    MaxIterations: 5,
 })
 ```
 
-Per-agent options are available via functional options:
+## 📂 示例
 
-```go
-guard := contextguard.New(registry)
+| 示例 | 说明 |
+|------|------|
+| [`examples/todo-agent`](examples/todo-agent/main.go) | Todo Agent — 完整的任务规划与执行示例 |
+| [`examples/openai-client`](examples/openai-client/main.go) | OpenAI 兼容客户端基础用法 |
+| [`examples/anthropic-client`](examples/anthropic-client/main.go) | Anthropic Claude 基础用法 |
+| [`examples/context-guard`](examples/context-guard/main.go) | ContextGuard 上下文窗口管理 |
+| [`examples/session-memory`](examples/session-memory/main.go) | Redis 会话记忆 |
+| [`examples/long-term-memory`](examples/long-term-memory/main.go) | PostgreSQL 长期记忆 |
+| [`examples/full-memory`](examples/full-memory/main.go) | 完整记忆系统（会话 + 长期） |
+| [`examples/llmagent-jaeger`](examples/llmagent-jaeger/main.go) | Jaeger 链路追踪 |
+| [`examples/llmagent-langfuse`](examples/llmagent-langfuse/main.go) | Langfuse 追踪与评估 |
+| [`examples/agents/sequentialagent`](examples/agents/sequentialagent/main.go) | 多 Agent 顺序编排 |
 
-// Threshold strategy (default) — summarizes when tokens approach the limit
-guard.Add("assistant", llmModel)
+## 📚 文档
 
-// Sliding window — summarizes after N turns regardless of token count
-guard.Add("researcher", llmResearcher, contextguard.WithSlidingWindow(30))
+详细设计文档请参阅 [`docs/`](docs/) 目录：
 
-// Manual context window override — bypasses the registry for this agent
-guard.Add("writer", llmWriter, contextguard.WithMaxTokens(1_000_000))
+- [Agent 架构设计](docs/AGENTS.md)
+- [ContextGuard 设计](docs/COMPACTION_TOKEN_THRESHOLD_STRATEGY.md)
+- [Langfuse 插件](docs/LANGFUSE_PLUGIN.md)
+- [状态管理](docs/state.md)
 
-// Custom compaction retry limit (default: 3) — applies to both strategies
-guard.Add("analyst", llmAnalyst, contextguard.WithMaxCompactionAttempts(5))
-```
+## 🔧 依赖
 
-Multi-agent setup is the same API — just call `Add` multiple times:
+- **Go 1.25+**
+- [google.golang.org/adk](https://google.golang.org/adk) — Google ADK 核心框架
+- [google.golang.org/genai](https://google.golang.org/genai) — Google GenAI SDK
+- [github.com/anthropics/anthropic-sdk-go](https://github.com/anthropics/anthropic-sdk-go) — Anthropic 官方 Go SDK
+- [github.com/redis/go-redis/v9](https://github.com/redis/go-redis) — Redis 客户端
+- [github.com/lib/pq](https://github.com/lib/pq) — PostgreSQL 驱动
+- [go.opentelemetry.io/otel](https://opentelemetry.io/docs/languages/go/) — OpenTelemetry SDK
 
-```go
-guard := contextguard.New(registry)
-for _, agentDef := range agents {
-    guard.Add(agentDef.ID, llmMap[agentDef.ID], optsFromDef(agentDef)...)
-}
-```
+## 📄 许可证
 
-### Custom Model Registry
-
-You can implement your own `ModelRegistry` instead of using `CrushRegistry`:
-
-```go
-type myRegistry struct{}
-
-func (r *myRegistry) ContextWindow(modelID string) int {
-    windows := map[string]int{
-        "claude-sonnet-4-5-20250929": 200000,
-        "gpt-4o":                     128000,
-    }
-    if w, ok := windows[modelID]; ok {
-        return w
-    }
-    return 128000
-}
-
-func (r *myRegistry) DefaultMaxTokens(modelID string) int {
-    return 4096
-}
-
-guard := contextguard.New(&myRegistry{})
-guard.Add("assistant", llmModel)
-```
-
-### How it works
-
-1. Before every LLM call, the plugin checks the configured strategy for the agent
-2. **Threshold**: estimates total tokens and triggers summarization when remaining capacity drops below a safety buffer (fixed 20k for windows >200k, 20% for smaller ones)
-3. **Sliding window**: counts Content entries since the last compaction and triggers when the limit is exceeded
-4. When triggered, the conversation is split into "old" (summarized by the agent's own LLM) and "recent" (kept verbatim)
-5. Both strategies retry compaction up to 3 times (`maxCompactionAttempts`) if the resulting summary still exceeds the threshold. After exhausting all attempts the request is sent as-is (best-effort)
-6. The summary is persisted in session state and injected on subsequent requests until the next compaction
-7. Tool call chains (`tool_use` + `tool_result`) are never split mid-chain to prevent provider errors
-
-## Examples
-
-Complete working examples in the `examples/` directory:
-
-| Example                                       | Description                                 |
-| --------------------------------------------- | ------------------------------------------- |
-| [openai-client](examples/openai-client)       | OpenAI/Ollama client usage                                |
-| [anthropic-client](examples/anthropic-client) | Anthropic Claude client usage                             |
-| [session-memory](examples/session-memory)     | Session management with Redis                             |
-| [long-term-memory](examples/long-term-memory) | Long-term memory with PostgreSQL + pgvector               |
-| [full-memory](examples/full-memory)           | Combined session + long-term memory                       |
-| [context-guard](examples/context-guard)       | ContextGuard plugin with CrushRegistry, manual thresholds, and sliding window |
-
-### Quick Start
-
-```bash
-# Start services
-docker run -d --name postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg16
-docker run -d --name redis -p 6379:6379 redis:alpine
-ollama pull qwen3:8b
-ollama pull nomic-embed-text
-
-# Run an example
-go run ./examples/openai-client
-```
-
-### Environment Variables
-
-| Variable             | Default                                                                | Description                            |
-| -------------------- | ---------------------------------------------------------------------- | -------------------------------------- |
-| `OPENAI_API_KEY`     | -                                                                      | OpenAI API key (not needed for Ollama) |
-| `OPENAI_BASE_URL`    | -                                                                      | OpenAI-compatible API endpoint         |
-| `ANTHROPIC_API_KEY`  | -                                                                      | Anthropic API key                      |
-| `MODEL_NAME`         | `gpt-4o` / `claude-sonnet-4-5-20250929`                                | Model name                             |
-| `EMBEDDING_BASE_URL` | `http://localhost:11434/v1`                                            | Embedding API endpoint                 |
-| `EMBEDDING_MODEL`    | `nomic-embed-text`                                                     | Embedding model                        |
-| `POSTGRES_URL`       | `postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable` | PostgreSQL connection                  |
-| `REDIS_ADDR`         | `localhost:6379`                                                       | Redis address                          |
-
-## Requirements
-
-- Go 1.24+
-- [Google ADK](https://google.github.io/adk-docs/) v0.5.0+
-
-## License
-
-Apache 2.0
+本项目基于 [Apache License 2.0](LICENSE) 许可证开源。
