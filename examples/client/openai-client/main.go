@@ -25,7 +25,7 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
-	genaiopenai "github.com/UnderTreeTech/adk-go/genai/openai"
+	genaiopenai "github.com/UnderTreeTech/adk-go/model/openai"
 )
 
 func main() {

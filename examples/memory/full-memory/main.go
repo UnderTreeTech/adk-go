@@ -38,8 +38,8 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
-	genaiopenai "github.com/UnderTreeTech/adk-go/genai/openai"
 	memorypostgres "github.com/UnderTreeTech/adk-go/memory/postgres"
+	genaiopenai "github.com/UnderTreeTech/adk-go/model/openai"
 	sessionredis "github.com/UnderTreeTech/adk-go/session/redis"
 	memorytools "github.com/UnderTreeTech/adk-go/tools/memory"
 )

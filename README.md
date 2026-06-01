@@ -9,7 +9,7 @@
 
 - **多模型适配** — 内置 OpenAI 兼容协议与 Anthropic Claude 的 LLM 适配器，支持 DeepSeek、Ollama 等任意 OpenAI 兼容服务
 - **统一 Agent 工厂** — 一站式创建 LLMAgent、SequentialAgent、ParallelAgent、LoopAgent，自动整合插件配置
-- **上下文窗口守护 (ContextGuard)** — 自动防止对话超出模型上下文窗口，支持滑动窗口与 Token 阈值两种压缩策略
+- **上下文窗口守护 (Compaction)** — 自动防止对话超出模型上下文窗口，支持滑动窗口与 Token 阈值两种压缩策略
 - **可观测性插件** — 集成 Jaeger 与 Langfuse 的 OpenTelemetry 链路追踪，记录 LLM 请求/响应、Token 用量
 - **会话持久化** — Redis 会话服务实现，支持 App/User/Session 三级状态隔离与 TTL 过期管理
 - **长期记忆** — PostgreSQL + pgvector 向量记忆服务，支持语义搜索与全文检索双模式
@@ -24,11 +24,11 @@ adk-go/
 ├── artifact/                  # Artifact 存储配置与服务
 │   ├── diskstorage/           # 本地磁盘存储实现
 │   └── s3/                    # S3 兼容对象存储实现
-├── genai/                     # LLM 模型适配器
+├── model/                     # LLM 模型适配器
 │   ├── openai/                # OpenAI 兼容协议适配器
 │   └── anthropic/             # Anthropic Claude SDK 适配器
 ├── plugin/                    # ADK 插件
-│   ├── contextguard/          # 上下文窗口管理插件
+│   ├── compaction/            # 上下文窗口管理插件
 │   └── trace/                 # 链路追踪基础框架
 │       ├── jaeger/            # Jaeger 集成
 │       └── langfuse/          # Langfuse 集成
@@ -36,6 +36,7 @@ adk-go/
 │   ├── redis/                 # Redis 会话持久化
 │   └── mongo/                 # MongoDB 会话持久化
 ├── memory/                    # 长期记忆服务
+│   ├── memorytypes/           # 记忆类型定义
 │   └── postgres/              # PostgreSQL + pgvector 实现
 ├── tools/                     # 实用工具
 │   ├── memory/                # 记忆 CRUD 工具集
@@ -44,17 +45,21 @@ adk-go/
 │   └── appendfiletool/        # 文件追加工具
 ├── prompt/                    # 全局提示词模板
 ├── examples/                  # 示例应用
-│   ├── todo-agent/            # Todo Agent 完整示例
-│   ├── anthropic-client/      # Anthropic 客户端示例
-│   ├── openai-client/         # OpenAI 客户端示例
-│   ├── context-guard/         # ContextGuard 示例
-│   ├── session-memory/        # 会话记忆示例
-│   ├── long-term-memory/      # 长期记忆示例
-│   ├── full-memory/           # 完整记忆系统示例
-│   ├── llmagent-jaeger/       # Jaeger 追踪示例
-│   ├── llmagent-langfuse/     # Langfuse 追踪示例
-│   └── agents/                # 多 Agent 编排示例
-│       └── sequentialagent/   # 顺序执行 Agent 示例
+│   ├── agents/                # 多 Agent 编排示例
+│   │   ├── todo-agent/        # Todo Agent 完整示例
+│   │   ├── sequentialagent/   # 顺序执行 Agent 示例
+│   │   └── parallel-conditional/ # 并行条件 Agent 示例
+│   ├── client/                # 客户端示例
+│   │   ├── openai-client/     # OpenAI 客户端示例
+│   │   └── anthropic-client/  # Anthropic 客户端示例
+│   ├── compaction/            # ContextGuard 上下文窗口管理示例
+│   ├── memory/                # 记忆相关示例
+│   │   ├── session-memory/    # 会话记忆示例
+│   │   ├── long-term-memory/  # 长期记忆示例
+│   │   └── full-memory/       # 完整记忆系统示例
+│   └── trace/                 # 可观测性示例
+│       ├── llmagent-jaeger/   # Jaeger 追踪示例
+│       └── llmagent-langfuse/ # Langfuse 追踪示例
 └── docs/                      # 设计文档
 ```
 
@@ -77,7 +82,7 @@ import (
     "os"
 
     "github.com/UnderTreeTech/adk-go/agent"
-    "github.com/UnderTreeTech/adk-go/genai/openai"
+    "github.com/UnderTreeTech/adk-go/model/openai"
     adkAgent "google.golang.org/adk/agent"
     "google.golang.org/adk/agent/llmagent"
     "google.golang.org/adk/cmd/launcher"
@@ -339,25 +344,17 @@ a, _ := agent.NewLoopAgent(agent.Config{
 
 | 示例 | 说明 |
 |------|------|
-| [`examples/todo-agent`](examples/todo-agent/main.go) | Todo Agent — 完整的任务规划与执行示例 |
-| [`examples/openai-client`](examples/openai-client/main.go) | OpenAI 兼容客户端基础用法 |
-| [`examples/anthropic-client`](examples/anthropic-client/main.go) | Anthropic Claude 基础用法 |
-| [`examples/context-guard`](examples/context-guard/main.go) | ContextGuard 上下文窗口管理 |
-| [`examples/session-memory`](examples/session-memory/main.go) | Redis 会话记忆 |
-| [`examples/long-term-memory`](examples/long-term-memory/main.go) | PostgreSQL 长期记忆 |
-| [`examples/full-memory`](examples/full-memory/main.go) | 完整记忆系统（会话 + 长期） |
-| [`examples/llmagent-jaeger`](examples/llmagent-jaeger/main.go) | Jaeger 链路追踪 |
-| [`examples/llmagent-langfuse`](examples/llmagent-langfuse/main.go) | Langfuse 追踪与评估 |
+| [`examples/agents/todo-agent`](examples/agents/todo-agent/main.go) | Todo Agent — 完整的任务规划与执行示例 |
+| [`examples/client/openai-client`](examples/client/openai-client/main.go) | OpenAI 兼容客户端基础用法 |
+| [`examples/client/anthropic-client`](examples/client/anthropic-client/main.go) | Anthropic Claude 基础用法 |
+| [`examples/compaction`](examples/compaction/main.go) | ContextGuard 上下文窗口管理 |
+| [`examples/memory/session-memory`](examples/memory/session-memory/main.go) | Redis 会话记忆 |
+| [`examples/memory/long-term-memory`](examples/memory/long-term-memory/main.go) | PostgreSQL 长期记忆 |
+| [`examples/memory/full-memory`](examples/memory/full-memory/main.go) | 完整记忆系统（会话 + 长期） |
+| [`examples/trace/llmagent-jaeger`](examples/trace/llmagent-jaeger/main.go) | Jaeger 链路追踪 |
+| [`examples/trace/llmagent-langfuse`](examples/trace/llmagent-langfuse/main.go) | Langfuse 追踪与评估 |
 | [`examples/agents/sequentialagent`](examples/agents/sequentialagent/main.go) | 多 Agent 顺序编排 |
-
-## 📚 文档
-
-详细设计文档请参阅 [`docs/`](docs/) 目录：
-
-- [Agent 架构设计](docs/AGENTS.md)
-- [ContextGuard 设计](docs/COMPACTION_TOKEN_THRESHOLD_STRATEGY.md)
-- [Langfuse 插件](docs/LANGFUSE_PLUGIN.md)
-- [状态管理](docs/state.md)
+| [`examples/agents/parallel-conditional`](examples/agents/parallel-conditional/main.go) | 并行条件 Agent 编排 |
 
 ## 🔧 依赖
 

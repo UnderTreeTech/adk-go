@@ -35,7 +35,7 @@ import (
 	"google.golang.org/adk/session"
 	"google.golang.org/genai"
 
-	genaianthropic "github.com/UnderTreeTech/adk-go/genai/anthropic"
+	genaianthropic "github.com/UnderTreeTech/adk-go/model/anthropic"
 	"github.com/UnderTreeTech/adk-go/plugin/compaction"
 )
 

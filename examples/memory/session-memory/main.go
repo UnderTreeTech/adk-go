@@ -32,7 +32,7 @@ import (
 	"google.golang.org/adk/tool"
 	"google.golang.org/genai"
 
-	genaiopenai "github.com/UnderTreeTech/adk-go/genai/openai"
+	genaiopenai "github.com/UnderTreeTech/adk-go/model/openai"
 	sessionredis "github.com/UnderTreeTech/adk-go/session/redis"
 )
 
