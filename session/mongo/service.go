@@ -16,10 +16,23 @@ import (
 	"google.golang.org/genai"
 )
 
+var (
+	errAppNameRequired = fmt.Errorf("app_name is required")
+)
+
+const appNameAgentSep = "::"
+
 // mongoSessionService implements session.Service using Mongo as the backend.
 type mongoSessionService struct {
 	cfg *mongo.Config
 	db  *mongo.DB
+}
+
+// appIdentity represents parsed app metadata from app_name.
+type appIdentity struct {
+	appName   string
+	agentName string
+	agentID   string
 }
 
 // NewMongoSessionService creates a new Mongo-backed session service.
@@ -34,6 +47,11 @@ func NewMongoSessionService(cfg *mongo.Config) session.Service {
 
 // Create implements session.Service.Create
 func (m *mongoSessionService) Create(ctx context.Context, req *session.CreateRequest) (*session.CreateResponse, error) {
+	ident, err := parseAppIdentity(req.AppName)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionId := req.SessionID
 	if sessionId == "" {
 		sessionId = uuid.NewString()
@@ -45,11 +63,11 @@ func (m *mongoSessionService) Create(ctx context.Context, req *session.CreateReq
 	now := xtime.Now().CurrentUnixTime()
 
 	// fetch完整状态逻辑：
-	as, err := m.fetchAppState(ctx, req.AppName)
+	as, err := m.fetchAppState(ctx, ident.agentID)
 	if err != nil {
 		return nil, err
 	}
-	us, err := m.fetchUserState(ctx, req.UserID, req.AppName)
+	us, err := m.fetchUserState(ctx, req.UserID, ident.agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -57,20 +75,20 @@ func (m *mongoSessionService) Create(ctx context.Context, req *session.CreateReq
 	// apply state delta
 	if len(appDelta) > 0 {
 		maps.Copy(as, appDelta)
-		if err := m.upsertAppState(ctx, req.AppName, as, now); err != nil {
+		if err := m.upsertAppState(ctx, ident.agentID, as, now); err != nil {
 			return nil, err
 		}
 	}
 	if len(userDelta) > 0 {
 		maps.Copy(us, userDelta)
-		if err := m.upsertUserState(ctx, req.UserID, req.AppName, us, now); err != nil {
+		if err := m.upsertUserState(ctx, req.UserID, ident.agentID, us, now); err != nil {
 			return nil, err
 		}
 	}
 	sess := &chatSession{
 		SessionID:  sessionId,
-		AgentName:  req.AppName,
-		AgentID:    req.AppName,
+		AgentName:  ident.agentName,
+		AgentID:    ident.agentID,
 		UserID:     req.UserID,
 		State:      sessDelta,
 		CreateTime: now,
@@ -83,8 +101,8 @@ func (m *mongoSessionService) Create(ctx context.Context, req *session.CreateReq
 
 	finalState := mergeStates(as, us, sessDelta)
 	ms := &mongoSession{
-		appName:   req.AppName,
-		agentID:   req.AppName,
+		appName:   ident.appName,
+		agentID:   ident.agentID,
 		userID:    req.UserID,
 		sessionID: sessionId,
 		state:     finalState,
@@ -95,7 +113,12 @@ func (m *mongoSessionService) Create(ctx context.Context, req *session.CreateReq
 
 // Get implements session.Service.Get
 func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) (*session.GetResponse, error) {
-	sess, err := m.findSessionById(ctx, req.SessionID)
+	ident, err := parseAppIdentity(req.AppName)
+	if err != nil {
+		return nil, err
+	}
+
+	sess, err := m.findSessionById(ctx, ident.agentID, req.SessionID)
 	if err != nil {
 		if mongo.IsErrNoDocuments(err) {
 			return nil, mongo.ErrNoSuchDocuments
@@ -104,18 +127,18 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 	}
 
 	// fetch完整状态逻辑：
-	as, err := m.fetchAppState(ctx, req.AppName)
+	as, err := m.fetchAppState(ctx, ident.agentID)
 	if err != nil {
 		return nil, err
 	}
-	us, err := m.fetchUserState(ctx, req.UserID, req.AppName)
+	us, err := m.fetchUserState(ctx, req.UserID, ident.agentID)
 	if err != nil {
 		return nil, err
 	}
 	finalState := mergeStates(as, us, sess.State)
 	ms := &mongoSession{
-		appName:   req.AppName,
-		agentID:   req.AppName,
+		appName:   ident.appName,
+		agentID:   ident.agentID,
 		userID:    req.UserID,
 		sessionID: req.SessionID,
 		state:     finalState,
@@ -131,23 +154,22 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 	if !req.After.IsZero() {
 		startTime = req.After.Unix()
 	}
-	evs, err := m.findSessionEvents(ctx, req.UserID, req.SessionID, startTime, opFilter)
+	evs, err := m.findSessionEvents(ctx, ident.agentID, req.UserID, req.SessionID, startTime, opFilter)
 	if err != nil {
 		return nil, err
 	}
 
 	// We fetched in DESC order to get the most recent ones (due to LIMIT).
 	// Now we reverse them to be in chronological ASC order for the response.
-	// Convert storage events to response events
 	for i, j := 0, len(evs)-1; i < j; i, j = i+1, j-1 {
 		evs[i], evs[j] = evs[j], evs[i]
 	}
 
 	adkEvents := make([]*session.Event, 0, len(evs))
 	for _, e := range evs {
-		ev, uerr := unmarshalEventToAdkEvent(e)
-		if uerr != nil {
-			log.Error(ctx, "unmarshalEventToAdkEvent fail", log.String("error", uerr.Error()))
+		ev, err := unmarshalEventToAdkEvent(e)
+		if err != nil {
+			log.Error(ctx, "unmarshalEventToAdkEvent fail", log.String("error", err.Error()))
 			continue
 		}
 		adkEvents = append(adkEvents, ev)
@@ -158,8 +180,13 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 
 // List implements session.Service.List
 func (m *mongoSessionService) List(ctx context.Context, req *session.ListRequest) (*session.ListResponse, error) {
+	ident, err := parseAppIdentity(req.AppName)
+	if err != nil {
+		return nil, err
+	}
+
 	filter := make(map[string]any)
-	filter["agent_id"] = req.AppName
+	filter["agent_id"] = ident.agentID
 	if req.UserID != "" {
 		filter["user_id"] = req.UserID
 	}
@@ -170,19 +197,19 @@ func (m *mongoSessionService) List(ctx context.Context, req *session.ListRequest
 	}
 
 	// fetch完整状态逻辑：
-	as, err := m.fetchAppState(ctx, req.AppName)
+	as, err := m.fetchAppState(ctx, ident.agentID)
 	if err != nil {
 		return nil, err
 	}
 	userStates := make(map[string]map[string]any)
 	if req.UserID != "" {
-		us, err := m.fetchUserState(ctx, req.UserID, req.AppName)
+		us, err := m.fetchUserState(ctx, req.UserID, ident.agentID)
 		if err != nil {
 			return nil, err
 		}
 		userStates[req.UserID] = us
 	} else {
-		uss, err := m.findUserStatesByAgentId(ctx, req.AppName)
+		uss, err := m.findUserStatesByAgentId(ctx, ident.agentID)
 		if err != nil {
 			return nil, err
 		}
@@ -191,16 +218,16 @@ func (m *mongoSessionService) List(ctx context.Context, req *session.ListRequest
 		}
 	}
 	responseSessions := make([]session.Session, 0, len(sessions))
-	for _, session := range sessions {
-		us := userStates[session.UserID]
-		finalState := mergeStates(as, us, session.State)
+	for _, sessionItem := range sessions {
+		us := userStates[sessionItem.UserID]
+		finalState := mergeStates(as, us, sessionItem.State)
 		ms := &mongoSession{
-			appName:   req.AppName,
-			agentID:   session.AgentID,
-			userID:    session.UserID,
-			sessionID: session.SessionID,
+			appName:   ident.appName,
+			agentID:   sessionItem.AgentID,
+			userID:    sessionItem.UserID,
+			sessionID: sessionItem.SessionID,
 			state:     finalState,
-			updatedAt: time.Unix(session.UpdateTime, 0),
+			updatedAt: time.Unix(sessionItem.UpdateTime, 0),
 		}
 		responseSessions = append(responseSessions, ms)
 	}
@@ -209,7 +236,11 @@ func (m *mongoSessionService) List(ctx context.Context, req *session.ListRequest
 
 // Delete implements session.Service.Delete
 func (m *mongoSessionService) Delete(ctx context.Context, req *session.DeleteRequest) error {
-	return m.removeSessionById(ctx, req.SessionID)
+	ident, err := parseAppIdentity(req.AppName)
+	if err != nil {
+		return err
+	}
+	return m.removeSessionById(ctx, ident.agentID, req.SessionID)
 }
 
 // AppendEvent implements session.Service.AppendEvent
@@ -236,18 +267,18 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 	event = trimTempDeltaState(event)
 
 	// 3. Persist to DB
-	session, err := m.findSessionById(ctx, curSession.ID())
+	sessionDoc, err := m.findSessionById(ctx, ms.agentID, curSession.ID())
 	if err != nil {
 		return err
 	}
 
-	sessionState := session.State
+	sessionState := sessionDoc.State
 	// fetch完整状态逻辑：
-	as, err := m.fetchAppState(ctx, session.AgentID)
+	as, err := m.fetchAppState(ctx, sessionDoc.AgentID)
 	if err != nil {
 		return err
 	}
-	us, err := m.fetchUserState(ctx, session.UserID, session.AgentID)
+	us, err := m.fetchUserState(ctx, sessionDoc.UserID, sessionDoc.AgentID)
 	if err != nil {
 		return err
 	}
@@ -255,13 +286,13 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 	// apply state delta
 	if len(appDelta) > 0 {
 		maps.Copy(as, appDelta)
-		if err = m.upsertAppState(ctx, session.AgentID, as, event.Timestamp.Unix()); err != nil {
+		if err = m.upsertAppState(ctx, sessionDoc.AgentID, as, event.Timestamp.Unix()); err != nil {
 			return err
 		}
 	}
 	if len(userDelta) > 0 {
 		maps.Copy(us, userDelta)
-		if err = m.upsertUserState(ctx, session.UserID, session.AgentID, us, event.Timestamp.Unix()); err != nil {
+		if err = m.upsertUserState(ctx, sessionDoc.UserID, sessionDoc.AgentID, us, event.Timestamp.Unix()); err != nil {
 			return err
 		}
 	}
@@ -269,7 +300,7 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 		maps.Copy(sessionState, sessDelta)
 	}
 
-	mEvent := marshalAdkEventToEvent(event, session.SessionID, session.AgentID, session.UserID)
+	mEvent := marshalAdkEventToEvent(event, sessionDoc.SessionID, sessionDoc.AgentID, sessionDoc.UserID)
 	err = m.createEvent(ctx, mEvent)
 	if err != nil {
 		return err
@@ -280,7 +311,7 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 		"state":       sessionState,
 		"update_time": event.Timestamp.Unix(),
 	}
-	err = m.editSession(ctx, session.SessionID, sessionSet)
+	err = m.editSession(ctx, sessionDoc.AgentID, sessionDoc.SessionID, sessionSet)
 	if err != nil {
 		return err
 	}
@@ -315,14 +346,13 @@ func (m *mongoSessionService) fetchUserState(ctx context.Context, userId, agentI
 // marshalAdkEventToEvent 将session.Event转为落地到Mongo的Event定义
 func marshalAdkEventToEvent(e *session.Event, sessID, agentID, userID string) *event {
 	return &event{
-		EventID:      e.ID,
-		SessionID:    sessID,
-		AgentID:      agentID,
-		UserID:       userID,
-		InvocationID: e.InvocationID,
-		Author:       e.Author,
-		Branch:       e.Branch,
-		// 直接赋值，mongo driver 会自动 marshal
+		EventID:            e.ID,
+		SessionID:          sessID,
+		AgentID:            agentID,
+		UserID:             userID,
+		InvocationID:       e.InvocationID,
+		Author:             e.Author,
+		Branch:             e.Branch,
 		Actions:            e.Actions,
 		LongRunningToolIDs: e.LongRunningToolIDs,
 		Content:            e.LLMResponse.Content,
@@ -358,7 +388,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 		},
 	}
 
-	// 1. 处理 Actions
 	if d.Actions != nil {
 		bytes, err := mongo.Marshal(d.Actions)
 		if err != nil {
@@ -369,7 +398,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 		}
 	}
 
-	// 2. 处理 Content (*genai.Content)
 	if d.Content != nil {
 		bytes, err := mongo.Marshal(d.Content)
 		if err != nil {
@@ -382,7 +410,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 		e.LLMResponse.Content = &content
 	}
 
-	// 3. 处理 GroundingMetadata
 	if d.GroundingMetadata != nil {
 		bytes, err := mongo.Marshal(d.GroundingMetadata)
 		if err != nil {
@@ -395,7 +422,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 		e.LLMResponse.GroundingMetadata = &gm
 	}
 
-	// 4. 处理 CustomMetadata (map[string]any)
 	if d.CustomMetadata != nil {
 		bytes, err := mongo.Marshal(d.CustomMetadata)
 		if err != nil {
@@ -408,7 +434,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 		e.LLMResponse.CustomMetadata = cm
 	}
 
-	// 5. 处理 UsageMetadata
 	if d.UsageMetadata != nil {
 		bytes, err := mongo.Marshal(d.UsageMetadata)
 		if err != nil {
@@ -421,7 +446,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 		e.LLMResponse.UsageMetadata = &um
 	}
 
-	// 6. 处理 CitationMetadata
 	if d.CitationMetadata != nil {
 		bytes, err := mongo.Marshal(d.CitationMetadata)
 		if err != nil {
@@ -442,7 +466,6 @@ func unmarshalEventToAdkEvent(d *event) (*session.Event, error) {
 func extractStateDeltas(delta map[string]any) (
 	appStateDelta, userStateDelta, sessionStateDelta map[string]any,
 ) {
-	// Initialize the maps to be returned.
 	appStateDelta = make(map[string]any)
 	userStateDelta = make(map[string]any)
 	sessionStateDelta = make(map[string]any)
@@ -457,7 +480,6 @@ func extractStateDeltas(delta map[string]any) (
 		} else if cleanKey, found := strings.CutPrefix(key, session.KeyPrefixUser); found {
 			userStateDelta[cleanKey] = value
 		} else if !strings.HasPrefix(key, session.KeyPrefixTemp) {
-			// This key belongs to the session state, as long as it's not temporary.
 			sessionStateDelta[key] = value
 		}
 	}
@@ -467,24 +489,33 @@ func extractStateDeltas(delta map[string]any) (
 // mergeStates combines app, user, and session state maps into a single map
 // for client-side responses, adding the appropriate prefixes back.
 func mergeStates(appState, userState, sessionState map[string]any) map[string]any {
-	// Pre-allocate map capacity for efficiency.
 	totalSize := len(appState) + len(userState) + len(sessionState)
 	mergedState := make(map[string]any, totalSize)
-
-	// In Go, we create a new map and copy key-value pairs. This is equivalent
-	// to the goal of Python's copy.deepcopy() in this context, which is to
-	// avoid modifying the original sessionState map.
 	maps.Copy(mergedState, sessionState)
 
 	for key, value := range appState {
 		mergedState[session.KeyPrefixApp+key] = value
 	}
-
 	for key, value := range userState {
 		mergedState[session.KeyPrefixUser+key] = value
 	}
-
 	return mergedState
+}
+
+// parseAppIdentity parses app_name in the format agent_name::agent_id.
+func parseAppIdentity(appName string) (appIdentity, error) {
+	if appName == "" {
+		return appIdentity{}, errAppNameRequired
+	}
+	idx := strings.LastIndex(appName, appNameAgentSep)
+	if idx <= 0 || idx+len(appNameAgentSep) >= len(appName) {
+		return appIdentity{}, fmt.Errorf("invalid app_name format %s, expected agent_name%sagent_id", appName, appNameAgentSep)
+	}
+	return appIdentity{
+		appName:   appName,
+		agentName: appName[:idx],
+		agentID:   appName[idx+len(appNameAgentSep):],
+	}, nil
 }
 
 type appState struct {
@@ -515,33 +546,27 @@ type chatSession struct {
 }
 
 type event struct {
-	ID           mongo.ObjectID `bson:"_id,omitempty"`
-	EventID      string         `bson:"event_id"`
-	SessionID    string         `bson:"session_id"`
-	AgentID      string         `bson:"agent_id"`
-	UserID       string         `bson:"user_id"`
-	InvocationID string         `bson:"invocation_id"`
-	Author       string         `bson:"author"`
-	Branch       string         `bson:"branch"`
-
-	// 复杂对象直接存储为内嵌文档
-	Actions            any      `bson:"actions"`
-	LongRunningToolIDs []string `bson:"long_running_tool_ids"`
-
-	// LLM Response 字段
-	Content           any            `bson:"content"`
-	GroundingMetadata any            `bson:"grounding_metadata"`
-	UsageMetadata     any            `bson:"usage_metadata"`
-	CitationMetadata  any            `bson:"citation_metadata"`
-	CustomMetadata    map[string]any `bson:"custom_metadata"`
-
-	Partial      bool   `bson:"partial"`
-	TurnComplete bool   `bson:"turn_complete"`
-	Interrupted  bool   `bson:"interrupted"`
-	ErrorCode    string `bson:"error_code"`
-	ErrorMessage string `bson:"error_message"`
-
-	CreateTime int64 `bson:"create_time"`
+	ID                 mongo.ObjectID `bson:"_id,omitempty"`
+	EventID            string         `bson:"event_id"`
+	SessionID          string         `bson:"session_id"`
+	AgentID            string         `bson:"agent_id"`
+	UserID             string         `bson:"user_id"`
+	InvocationID       string         `bson:"invocation_id"`
+	Author             string         `bson:"author"`
+	Branch             string         `bson:"branch"`
+	Actions            any            `bson:"actions"`
+	LongRunningToolIDs []string       `bson:"long_running_tool_ids"`
+	Content            any            `bson:"content"`
+	GroundingMetadata  any            `bson:"grounding_metadata"`
+	UsageMetadata      any            `bson:"usage_metadata"`
+	CitationMetadata   any            `bson:"citation_metadata"`
+	CustomMetadata     map[string]any `bson:"custom_metadata"`
+	Partial            bool           `bson:"partial"`
+	TurnComplete       bool           `bson:"turn_complete"`
+	Interrupted        bool           `bson:"interrupted"`
+	ErrorCode          string         `bson:"error_code"`
+	ErrorMessage       string         `bson:"error_message"`
+	CreateTime         int64          `bson:"create_time"`
 }
 
 const (
@@ -551,7 +576,6 @@ const (
 	collectionEvent     = "event"
 )
 
-// CreateSession 创建会话信息
 func (m *mongoSessionService) createSession(ctx context.Context, cs *chatSession) (err error) {
 	result, err := m.db.GetCollection(collectionSession).Insert(ctx, cs)
 	if err != nil {
@@ -562,9 +586,9 @@ func (m *mongoSessionService) createSession(ctx context.Context, cs *chatSession
 	return
 }
 
-// EditSession 根据会话ID更新会话信息
-func (m *mongoSessionService) editSession(ctx context.Context, sessionId string, set map[string]any) (err error) {
+func (m *mongoSessionService) editSession(ctx context.Context, agentId, sessionId string, set map[string]any) (err error) {
 	filter := mongo.M{
+		"agent_id":   agentId,
 		"session_id": sessionId,
 	}
 
@@ -576,69 +600,39 @@ func (m *mongoSessionService) editSession(ctx context.Context, sessionId string,
 	return
 }
 
-// FindSessionById 通过id查询会话信息
-func (m *mongoSessionService) findSessionById(ctx context.Context, sessionId string) (session *chatSession, err error) {
+func (m *mongoSessionService) findSessionById(ctx context.Context, agentId, sessionId string) (session *chatSession, err error) {
 	session = &chatSession{}
 	err = m.db.GetCollection(collectionSession).
-		Find(ctx, mongo.M{"session_id": sessionId, "deleted": 0}).
+		Find(ctx, mongo.M{"agent_id": agentId, "session_id": sessionId, "deleted": 0}).
 		One(session)
 
 	if err != nil {
-		log.Error(ctx, "find session info fail", log.String("session_id", sessionId),
-			log.String("error", err.Error()))
+		log.Error(ctx, "find session info fail", log.String("agent_id", agentId),
+			log.String("session_id", sessionId), log.String("error", err.Error()))
 		return
 	}
 	return
 }
 
-// FindSessionsByUserId 查询用户会话信息
-func (m *mongoSessionService) findSessionsByUserId(ctx context.Context, userId string, opFilter map[string]any) (sessions []*chatSession, err error) {
-	sessions = make([]*chatSession, 0)
-
-	query := m.db.GetCollection(collectionSession).
-		Find(ctx, mongo.M{"user_id": userId, "deleted": 0})
-	if sort, ok := opFilter["_sort"]; ok {
-		for _, s := range sort.([]string) {
-			query = query.Sort(s)
-		}
-		delete(opFilter, "_sort")
-	}
-	if _, ok := opFilter["_limit"]; ok {
-		if limit, ok := opFilter["_limit"].(int64); ok {
-			query = query.Limit(limit)
-		}
-		delete(opFilter, "_limit")
-	}
-
-	err = query.All(&sessions)
-	if err != nil {
-		log.Error(ctx, "find user session info fail", log.String("user_id", userId),
-			log.String("error", err.Error()))
-		return
-	}
-	return
-}
-
-// FindSessions 查询会话信息列表
 func (m *mongoSessionService) findSessions(ctx context.Context, filter map[string]any, opFilter map[string]any) (sessions []*chatSession, err error) {
 	sessions = make([]*chatSession, 0)
-
 	if _, ok := filter["deleted"]; !ok {
 		filter["deleted"] = 0
 	}
-
 	query := m.db.GetCollection(collectionSession).Find(ctx, filter)
-	if sort, ok := opFilter["_sort"]; ok {
-		for _, s := range sort.([]string) {
-			query = query.Sort(s)
+	if opFilter != nil {
+		if sort, ok := opFilter["_sort"]; ok {
+			for _, s := range sort.([]string) {
+				query = query.Sort(s)
+			}
+			delete(opFilter, "_sort")
 		}
-		delete(opFilter, "_sort")
-	}
-	if _, ok := opFilter["_limit"]; ok {
-		if limit, ok := opFilter["_limit"].(int64); ok {
-			query = query.Limit(limit)
+		if _, ok := opFilter["_limit"]; ok {
+			if limit, ok := opFilter["_limit"].(int64); ok {
+				query = query.Limit(limit)
+			}
+			delete(opFilter, "_limit")
 		}
-		delete(opFilter, "_limit")
 	}
 
 	err = query.All(&sessions)
@@ -650,9 +644,9 @@ func (m *mongoSessionService) findSessions(ctx context.Context, filter map[strin
 	return
 }
 
-// RemoveSessionById 通过id删除会话信息
-func (m *mongoSessionService) removeSessionById(ctx context.Context, sessionId string) (err error) {
+func (m *mongoSessionService) removeSessionById(ctx context.Context, agentId, sessionId string) (err error) {
 	filter := mongo.M{
+		"agent_id":   agentId,
 		"session_id": sessionId,
 	}
 	setCond := mongo.M{
@@ -663,98 +657,43 @@ func (m *mongoSessionService) removeSessionById(ctx context.Context, sessionId s
 	}
 	err = m.db.GetCollection(collectionSession).UpdateOne(ctx, filter, setCond)
 	if err != nil {
-		log.Error(ctx, "remove session info", log.String("session_id", sessionId),
-			log.String("error", err.Error()))
+		log.Error(ctx, "remove session info", log.String("agent_id", agentId),
+			log.String("session_id", sessionId), log.String("error", err.Error()))
 		return
 	}
 	return
 }
 
-// CreateAppState 创建应用级状态信息
-func (m *mongoSessionService) createAppState(ctx context.Context, as *appState) (err error) {
-	result, err := m.db.GetCollection(collectionAppState).Insert(ctx, as)
-	if err != nil {
-		log.Error(ctx, "create app state fail", log.String("error", err.Error()))
-		return
-	}
-	log.Debug(ctx, "create app state success", log.Any("id", result.InsertedID))
-	return
-}
-
-// FindAppState 通过AgentID查询应用级状态信息
 func (m *mongoSessionService) findAppState(ctx context.Context, agentId string) (as *appState, err error) {
 	as = &appState{}
 	err = m.db.GetCollection(collectionAppState).
 		Find(ctx, mongo.M{"agent_id": agentId}).
 		One(as)
-
 	if err != nil {
-		log.Error(ctx, "find app state info fail", log.String("agent_id", agentId),
-			log.String("error", err.Error()))
+		log.Error(ctx, "find app state info fail", log.String("agent_id", agentId), log.String("error", err.Error()))
 		return
 	}
 	return
 }
 
-// EditAppState 通过AgentID更新应用级状态信息
-func (m *mongoSessionService) editAppState(ctx context.Context, agentId string, state map[string]any) (err error) {
-	filter := mongo.M{
-		"agent_id": agentId,
-	}
-	set := mongo.M{
-		"$set": mongo.M{
-			"state":       state,
-			"update_time": xtime.Now().CurrentUnixTime(),
-		},
-	}
-	err = m.db.GetCollection(collectionAppState).UpdateOne(ctx, filter, set)
-	if err != nil {
-		log.Error(ctx, "edit app state info fail", log.String("agent_id", agentId),
-			log.String("error", err.Error()))
-		return
-	}
-	return
-}
-
-// UpsertAppState 通过AgentID创建或更新应用级状态信息
 func (m *mongoSessionService) upsertAppState(ctx context.Context, agentId string, state map[string]any, updateTime int64) (err error) {
-	filter := mongo.M{
-		"agent_id": agentId,
-	}
-	set := mongo.M{
-		"agent_id":    agentId,
-		"state":       state,
-		"update_time": updateTime,
-	}
+	filter := mongo.M{"agent_id": agentId}
+	set := mongo.M{"agent_id": agentId, "state": state, "update_time": updateTime}
 	result, err := m.db.GetCollection(collectionAppState).Upsert(ctx, filter, set)
 	if err != nil {
 		log.Error(ctx, "upsert app state info fail", log.String("agent_id", agentId),
-			log.Any("state", state), log.Int64("update_time", updateTime),
-			log.String("error", err.Error()))
+			log.Any("state", state), log.Int64("update_time", updateTime), log.String("error", err.Error()))
 		return
 	}
 	log.Debug(ctx, "upsert app status success", log.Any("result", result))
 	return
 }
 
-// CreateUserState 创建用户级状态信息
-func (m *mongoSessionService) createUserState(ctx context.Context, as *userState) (err error) {
-	result, err := m.db.GetCollection(collectionUserState).Insert(ctx, as)
-	if err != nil {
-		log.Error(ctx, "create user state fail", log.String("error", err.Error()))
-		return
-	}
-	log.Debug(ctx, "create user state success", log.Any("id", result.InsertedID))
-	return
-}
-
-// FindUserState 通过UserID及AgentId查询用户级状态信息
 func (m *mongoSessionService) findUserState(ctx context.Context, userId, agentId string) (us *userState, err error) {
 	us = &userState{}
 	err = m.db.GetCollection(collectionUserState).
 		Find(ctx, mongo.M{"agent_id": agentId, "user_id": userId}).
 		One(us)
-
 	if err != nil {
 		log.Error(ctx, "find user state info fail", log.String("agent_id", agentId),
 			log.String("user_id", userId), log.String("error", err.Error()))
@@ -763,39 +702,9 @@ func (m *mongoSessionService) findUserState(ctx context.Context, userId, agentId
 	return
 }
 
-// EditUserState 通过UserID及AgentId更新用户级状态信息
-func (m *mongoSessionService) editUserState(ctx context.Context, userId, agentId string, state map[string]any) (err error) {
-	filter := mongo.M{
-		"agent_id": agentId,
-		"user_id":  userId,
-	}
-	set := mongo.M{
-		"$set": mongo.M{
-			"state":       state,
-			"update_time": xtime.Now().CurrentUnixTime(),
-		},
-	}
-	err = m.db.GetCollection(collectionUserState).UpdateOne(ctx, filter, set)
-	if err != nil {
-		log.Error(ctx, "edit user state info fail", log.String("agent_id", agentId),
-			log.String("user_id", userId), log.String("error", err.Error()))
-		return
-	}
-	return
-}
-
-// UpsertUserState 通过UserID及AgentId创建或更新用户级状态信息
 func (m *mongoSessionService) upsertUserState(ctx context.Context, userId, agentId string, state map[string]any, updateTime int64) (err error) {
-	filter := mongo.M{
-		"agent_id": agentId,
-		"user_id":  userId,
-	}
-	set := mongo.M{
-		"agent_id":    agentId,
-		"user_id":     userId,
-		"state":       state,
-		"update_time": updateTime,
-	}
+	filter := mongo.M{"agent_id": agentId, "user_id": userId}
+	set := mongo.M{"agent_id": agentId, "user_id": userId, "state": state, "update_time": updateTime}
 	result, err := m.db.GetCollection(collectionUserState).Upsert(ctx, filter, set)
 	if err != nil {
 		log.Error(ctx, "upsert user state info fail", log.String("agent_id", agentId),
@@ -807,37 +716,25 @@ func (m *mongoSessionService) upsertUserState(ctx context.Context, userId, agent
 	return
 }
 
-// FindUserStatesByAgentId 通过AgentId查询所有用户状态
 func (m *mongoSessionService) findUserStatesByAgentId(ctx context.Context, agentId string) (uss []*userState, err error) {
 	uss = make([]*userState, 0)
 	err = m.db.GetCollection(collectionUserState).
 		Find(ctx, mongo.M{"agent_id": agentId}).
 		All(&uss)
-
 	if err != nil {
-		log.Error(ctx, "find app all user state info fail", log.String("agent_id", agentId),
-			log.String("error", err.Error()))
+		log.Error(ctx, "find app all user state info fail", log.String("agent_id", agentId), log.String("error", err.Error()))
 		return
 	}
 	return
 }
 
-// FindSessionEvents 查询用户会话事件列表
-func (m *mongoSessionService) findSessionEvents(ctx context.Context, userId, sessionId string, startTime int64, opFilter map[string]any) (events []*event, err error) {
+func (m *mongoSessionService) findSessionEvents(ctx context.Context, agentId, userId, sessionId string, startTime int64, opFilter map[string]any) (events []*event, err error) {
 	events = make([]*event, 0)
-
-	filter := mongo.M{
-		"user_id":    userId,
-		"session_id": sessionId,
-	}
+	filter := mongo.M{"agent_id": agentId, "user_id": userId, "session_id": sessionId}
 	if startTime > int64(0) {
-		filter["create_time"] = mongo.M{
-			"$gte": startTime,
-		}
+		filter["create_time"] = mongo.M{"$gte": startTime}
 	}
-	query := m.db.GetCollection(collectionEvent).
-		Find(ctx, filter)
-
+	query := m.db.GetCollection(collectionEvent).Find(ctx, filter)
 	if sort, ok := opFilter["_sort"]; ok {
 		for _, s := range sort.([]string) {
 			query = query.Sort(s)
@@ -850,17 +747,15 @@ func (m *mongoSessionService) findSessionEvents(ctx context.Context, userId, ses
 		}
 		delete(opFilter, "_limit")
 	}
-
 	err = query.All(&events)
 	if err != nil {
-		log.Error(ctx, "find session event info fail", log.String("user_id", userId),
-			log.String("error", err.Error()))
+		log.Error(ctx, "find session event info fail", log.String("agent_id", agentId),
+			log.String("user_id", userId), log.String("error", err.Error()))
 		return
 	}
 	return
 }
 
-// CreateEvent 创建事件信息
 func (m *mongoSessionService) createEvent(ctx context.Context, event *event) (err error) {
 	result, err := m.db.GetCollection(collectionEvent).Insert(ctx, event)
 	if err != nil {
