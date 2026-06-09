@@ -321,6 +321,7 @@ func (m *mongoSessionService) AppendEvent(ctx context.Context, curSession sessio
 	return nil
 }
 
+// fetchAppState retrieves app-scoped state by agent_id.
 func (m *mongoSessionService) fetchAppState(ctx context.Context, agentId string) (map[string]any, error) {
 	as, err := m.findAppState(ctx, agentId)
 	if err != nil {
@@ -332,6 +333,7 @@ func (m *mongoSessionService) fetchAppState(ctx context.Context, agentId string)
 	return as.State, nil
 }
 
+// fetchUserState retrieves user-scoped state by user_id and agent_id.
 func (m *mongoSessionService) fetchUserState(ctx context.Context, userId, agentId string) (map[string]any, error) {
 	us, err := m.findUserState(ctx, userId, agentId)
 	if err != nil {
@@ -503,6 +505,7 @@ func mergeStates(appState, userState, sessionState map[string]any) map[string]an
 }
 
 // parseAppIdentity parses app_name in the format agent_name::agent_id.
+// parseAppIdentity parses app_name in the format agent_name::agent_id.
 func parseAppIdentity(appName string) (appIdentity, error) {
 	if appName == "" {
 		return appIdentity{}, errAppNameRequired
@@ -576,6 +579,7 @@ const (
 	collectionEvent     = "event"
 )
 
+// createSession inserts a new session document.
 func (m *mongoSessionService) createSession(ctx context.Context, cs *chatSession) (err error) {
 	result, err := m.db.GetCollection(collectionSession).Insert(ctx, cs)
 	if err != nil {
@@ -586,6 +590,7 @@ func (m *mongoSessionService) createSession(ctx context.Context, cs *chatSession
 	return
 }
 
+// editSession updates a session document by agent_id and session_id.
 func (m *mongoSessionService) editSession(ctx context.Context, agentId, sessionId string, set map[string]any) (err error) {
 	filter := mongo.M{
 		"agent_id":   agentId,
@@ -600,6 +605,7 @@ func (m *mongoSessionService) editSession(ctx context.Context, agentId, sessionI
 	return
 }
 
+// findSessionById retrieves a session document by agent_id and session_id.
 func (m *mongoSessionService) findSessionById(ctx context.Context, agentId, sessionId string) (session *chatSession, err error) {
 	session = &chatSession{}
 	err = m.db.GetCollection(collectionSession).
@@ -614,6 +620,7 @@ func (m *mongoSessionService) findSessionById(ctx context.Context, agentId, sess
 	return
 }
 
+// findSessions queries session documents by filter and optional sort/limit options.
 func (m *mongoSessionService) findSessions(ctx context.Context, filter map[string]any, opFilter map[string]any) (sessions []*chatSession, err error) {
 	sessions = make([]*chatSession, 0)
 	if _, ok := filter["deleted"]; !ok {
@@ -644,6 +651,7 @@ func (m *mongoSessionService) findSessions(ctx context.Context, filter map[strin
 	return
 }
 
+// removeSessionById soft-deletes a session document by agent_id and session_id.
 func (m *mongoSessionService) removeSessionById(ctx context.Context, agentId, sessionId string) (err error) {
 	filter := mongo.M{
 		"agent_id":   agentId,
@@ -664,6 +672,7 @@ func (m *mongoSessionService) removeSessionById(ctx context.Context, agentId, se
 	return
 }
 
+// findAppState retrieves an app_state document by agent_id.
 func (m *mongoSessionService) findAppState(ctx context.Context, agentId string) (as *appState, err error) {
 	as = &appState{}
 	err = m.db.GetCollection(collectionAppState).
@@ -676,6 +685,7 @@ func (m *mongoSessionService) findAppState(ctx context.Context, agentId string) 
 	return
 }
 
+// upsertAppState creates or updates an app_state document by agent_id.
 func (m *mongoSessionService) upsertAppState(ctx context.Context, agentId string, state map[string]any, updateTime int64) (err error) {
 	filter := mongo.M{"agent_id": agentId}
 	set := mongo.M{"agent_id": agentId, "state": state, "update_time": updateTime}
@@ -689,6 +699,7 @@ func (m *mongoSessionService) upsertAppState(ctx context.Context, agentId string
 	return
 }
 
+// findUserState retrieves a user_state document by user_id and agent_id.
 func (m *mongoSessionService) findUserState(ctx context.Context, userId, agentId string) (us *userState, err error) {
 	us = &userState{}
 	err = m.db.GetCollection(collectionUserState).
@@ -702,6 +713,7 @@ func (m *mongoSessionService) findUserState(ctx context.Context, userId, agentId
 	return
 }
 
+// upsertUserState creates or updates a user_state document by user_id and agent_id.
 func (m *mongoSessionService) upsertUserState(ctx context.Context, userId, agentId string, state map[string]any, updateTime int64) (err error) {
 	filter := mongo.M{"agent_id": agentId, "user_id": userId}
 	set := mongo.M{"agent_id": agentId, "user_id": userId, "state": state, "update_time": updateTime}
@@ -716,6 +728,7 @@ func (m *mongoSessionService) upsertUserState(ctx context.Context, userId, agent
 	return
 }
 
+// findUserStatesByAgentId retrieves all user_state documents for an agent_id.
 func (m *mongoSessionService) findUserStatesByAgentId(ctx context.Context, agentId string) (uss []*userState, err error) {
 	uss = make([]*userState, 0)
 	err = m.db.GetCollection(collectionUserState).
@@ -728,6 +741,7 @@ func (m *mongoSessionService) findUserStatesByAgentId(ctx context.Context, agent
 	return
 }
 
+// findSessionEvents retrieves event documents by agent_id, user_id and session_id with optional time and query options.
 func (m *mongoSessionService) findSessionEvents(ctx context.Context, agentId, userId, sessionId string, startTime int64, opFilter map[string]any) (events []*event, err error) {
 	events = make([]*event, 0)
 	filter := mongo.M{"agent_id": agentId, "user_id": userId, "session_id": sessionId}
@@ -756,6 +770,7 @@ func (m *mongoSessionService) findSessionEvents(ctx context.Context, agentId, us
 	return
 }
 
+// createEvent inserts a new event document.
 func (m *mongoSessionService) createEvent(ctx context.Context, event *event) (err error) {
 	result, err := m.db.GetCollection(collectionEvent).Insert(ctx, event)
 	if err != nil {
