@@ -67,6 +67,8 @@ func (m *openAIModel) GenerateContent(ctx context.Context, req *model.LLMRequest
 		openaiReq.ExtraBody = extraBody.(map[string]any)
 	}
 
+	openaiReq.Messages = sanitizeOpenAIMessages(openaiReq.Messages)
+
 	if stream {
 		return m.generateStream(ctx, openaiReq)
 	}
@@ -967,4 +969,98 @@ func maybeAppendUserContent(req *model.LLMRequest) {
 	if last := req.Contents[len(req.Contents)-1]; last != nil && last.Role != genai.RoleUser {
 		req.Contents = append(req.Contents, genai.NewContentFromText("Continue processing previous requests as instructed. Exit or provide a summary if no more outputs are needed.", genai.RoleUser))
 	}
+}
+
+// sanitizeOpenAIMessages 净化传递给 OpenAI API 的消息历史列表。
+// 它的主要作用是确保工具调用（Tool Calls）和工具响应（Tool Responses）成对出现，消除任何孤立的部分。
+// 采用双向标记清除的过程：先用 Calls 去匹配 Responses 清理多余响应，再用剩下的 Responses 匹配 Calls 找出无效调用。
+// OpenAI 的 API 对消息上下文的严格度非常高。如果在 messages 数组中出现了一个 tool_call（assistant 发起）， 但后续没有对应的工具执行结果（role 为 tool 的消息）；
+// 或者出现了一个 tool 返回结果，但前面没有对应的 tool_call，API 往往会直接报错返回 400 Bad Request。
+// 这种不匹配通常发生在对话上下文被截断（比如达到了 token 上限丢弃了前面的消息）或多路上下文拼接时。
+func sanitizeOpenAIMessages(messages []message) []message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	// Phase 1: 收集所有已知的 tool_call IDs
+	// 遍历所有消息，找出 assistant 消息中发起的所有 tool_call ID 并记录，建立“白名单”。
+	seenCallIDs := make(map[string]bool)
+	for _, msg := range messages {
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" {
+				seenCallIDs[tc.ID] = true
+			}
+		}
+	}
+
+	// Phase 2: 移除孤立的工具响应 (Orphaned Tool Responses)
+	// 如果一条工具响应（role="tool"）对应的 ToolCallID 不在上述白名单中，说明它是“没有请求的响应”，直接丢弃。
+	cleaned := make([]message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "tool" && msg.ToolCallID != "" && !seenCallIDs[msg.ToolCallID] {
+			continue
+		}
+		cleaned = append(cleaned, msg)
+	}
+
+	// Phase 3: 找出孤立的 tool_call (Orphaned Tool Calls)
+	// 1. 扫描清理过的列表，收集所有留下的有效工具响应对应的 ID。
+	respondedIDs := make(map[string]bool)
+	for _, msg := range cleaned {
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			respondedIDs[msg.ToolCallID] = true
+		}
+	}
+
+	// 2. 反向检查 assistant 发起的调用，如果不在有效响应 ID 列表中，说明该调用“被抛弃了没有执行结果”。
+	orphanedCallIDs := make(map[string]bool)
+	for _, msg := range cleaned {
+		for _, tc := range msg.ToolCalls {
+			if tc.ID != "" && !respondedIDs[tc.ID] {
+				orphanedCallIDs[tc.ID] = true
+			}
+		}
+	}
+
+	if len(orphanedCallIDs) == 0 {
+		return cleaned
+	}
+
+	// Phase 4: 精准移除孤立的 tool_call (Surgical Removal)
+	// 不直接丢弃整条消息，而是做精细裁剪，将孤立调用从 assistant 的消息体中抠掉。
+	result := make([]message, 0, len(cleaned))
+	for _, msg := range cleaned {
+		if len(msg.ToolCalls) == 0 {
+			result = append(result, msg)
+			continue
+		}
+
+		// 过滤出该消息中【有效】的 tool_call (即没有被判定为孤立的调用)
+		var keptCalls []toolCall
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == "" || !orphanedCallIDs[tc.ID] {
+				keptCalls = append(keptCalls, tc)
+			}
+		}
+
+		switch {
+		case len(keptCalls) == len(msg.ToolCalls):
+			// 1. 全部调用都是有效的，原样保留该消息。
+			result = append(result, msg)
+		case len(keptCalls) > 0:
+			// 2. 只有部分调用失效。保留有效调用并替换列表。
+			msg.ToolCalls = keptCalls
+			result = append(result, msg)
+		default:
+			// 3. 所有调用都失效了。
+			// 如果该消息还包含文本(Content)或思考过程(ReasoningContent)，将其降级为普通 assistant 消息（清空 ToolCalls）。
+			// 如果没有其他内容，消息直接被舍弃。
+			if msg.Content != nil || msg.ReasoningContent != nil {
+				msg.ToolCalls = nil
+				result = append(result, msg)
+			}
+		}
+	}
+
+	return result
 }

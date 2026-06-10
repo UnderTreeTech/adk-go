@@ -1,4 +1,4 @@
-// Package contextguard implements an ADK plugin that prevents conversations
+// Package compaction implements an ADK plugin that prevents conversations
 // from exceeding the LLM's context window. Before every model call it
 // delegates to a configurable Strategy that decides whether and how to
 // compact the conversation history.
