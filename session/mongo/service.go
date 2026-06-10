@@ -24,8 +24,7 @@ const appNameAgentSep = "::"
 
 // mongoSessionService implements session.Service using Mongo as the backend.
 type mongoSessionService struct {
-	cfg *mongo.Config
-	db  *mongo.DB
+	db *mongo.DB
 }
 
 // appIdentity represents parsed app metadata from app_name.
@@ -36,12 +35,9 @@ type appIdentity struct {
 }
 
 // NewMongoSessionService creates a new Mongo-backed session service.
-func NewMongoSessionService(cfg *mongo.Config) session.Service {
-	db := mongo.Open(cfg)
-
+func NewMongoSessionService(db *mongo.DB) session.Service {
 	return &mongoSessionService{
-		cfg: cfg,
-		db:  db,
+		db: db,
 	}
 }
 
