@@ -52,11 +52,11 @@ const (
 )
 
 const (
-	stateKeyPrefixSummary              = "__context_guard_summary_"
-	stateKeyPrefixSummarizedAt         = "__context_guard_summarized_at_"
-	stateKeyPrefixContentsAtCompaction = "__context_guard_contents_at_compaction_"
-	stateKeyPrefixRealTokens           = "__context_guard_real_tokens_"
-	stateKeyPrefixLastHeuristic        = "__context_guard_last_heuristic_"
+	stateKeyPrefixSummary              = "__compaction_summary_"
+	stateKeyPrefixSummarizedAt         = "__compaction_summarized_at_"
+	stateKeyPrefixContentsAtCompaction = "__compaction_contents_at_compaction_"
+	stateKeyPrefixRealTokens           = "__compaction_real_tokens_"
+	stateKeyPrefixLastHeuristic        = "__compaction_last_heuristic_"
 
 	largeContextWindowThreshold = 200_000
 	largeContextWindowBuffer    = 20_000
@@ -183,7 +183,7 @@ func (g *ContextGuard) PluginConfig() runner.PluginConfig {
 	guard := &contextGuard{strategies: g.strategies}
 
 	p, _ := plugin.New(plugin.Config{
-		Name:                "context_guard",
+		Name:                "compaction",
 		BeforeModelCallback: llmagent.BeforeModelCallback(guard.beforeModel),
 		AfterModelCallback:  llmagent.AfterModelCallback(guard.afterModel),
 	})
