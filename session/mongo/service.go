@@ -41,9 +41,11 @@ type appIdentity struct {
 }
 
 // NewMongoSessionService creates a new Mongo-backed session service.
-func NewMongoSessionService(db *mongo.DB) session.Service {
+func NewMongoSessionService(db *mongo.DB, numRecentEvents int, after int64) session.Service {
 	return &mongoSessionService{
-		db: db,
+		db:              db,
+		NumRecentEvents: numRecentEvents,
+		After:           after,
 	}
 }
 
