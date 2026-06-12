@@ -25,6 +25,12 @@ const appNameAgentSep = "::"
 // mongoSessionService implements session.Service using Mongo as the backend.
 type mongoSessionService struct {
 	db *mongo.DB
+	// NumRecentEvents returns at most NumRecentEvents most recent events.
+	// Optional: if zero, the filter is not applied.
+	NumRecentEvents int
+	// After returns events with timestamp >= the given time.
+	// Optional: if zero, the filter is not applied.
+	After int64
 }
 
 // appIdentity represents parsed app metadata from app_name.
@@ -145,10 +151,14 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 	opFilter["_sort"] = []string{"-create_time"}
 	if req.NumRecentEvents > 0 {
 		opFilter["_limit"] = int64(req.NumRecentEvents)
+	} else if m.NumRecentEvents > 0 {
+		opFilter["_limit"] = int64(m.NumRecentEvents)
 	}
 	var startTime int64
 	if !req.After.IsZero() {
 		startTime = req.After.Unix()
+	} else if m.After > 0 {
+		startTime = m.After
 	}
 	evs, err := m.findSessionEvents(ctx, ident.agentID, req.UserID, req.SessionID, startTime, opFilter)
 	if err != nil {
