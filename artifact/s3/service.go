@@ -99,14 +99,14 @@ func (s *s3Service) Save(ctx context.Context, req *artifact.SaveRequest) (*artif
 	if err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	newArtifact := req.Part
 
 	nextVersion := int64(1)
 
 	// Determine next version
 	response, err := s.versions(ctx, &artifact.VersionsRequest{
-		AppName: req.AppName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
+		AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list artifact versions: %w", err)
@@ -147,7 +147,7 @@ func (s *s3Service) Delete(ctx context.Context, req *artifact.DeleteRequest) err
 	if err != nil {
 		return fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	version := req.Version
 
 	// Delete specific version
@@ -166,7 +166,7 @@ func (s *s3Service) Delete(ctx context.Context, req *artifact.DeleteRequest) err
 	// Delete all versions
 	// First fetch all versions to get their keys
 	response, err := s.versions(ctx, &artifact.VersionsRequest{
-		AppName: req.AppName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
+		AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to fetch versions on delete artifact: %w", err)
@@ -208,12 +208,12 @@ func (s *s3Service) Load(ctx context.Context, req *artifact.LoadRequest) (*artif
 	if err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	version := req.Version
 
 	if version == 0 {
 		response, err := s.versions(ctx, &artifact.VersionsRequest{
-			AppName: req.AppName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
+			AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to list artifact versions: %w", err)
@@ -297,7 +297,7 @@ func (s *s3Service) List(ctx context.Context, req *artifact.ListRequest) (*artif
 	if err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID := req.AppName, req.UserID, req.SessionID
+	appName, userID, sessionID := at.HashAppName(req.AppName), req.UserID, req.SessionID
 	filenamesSet := map[string]bool{}
 
 	// Fetch filenames for the session.
@@ -323,7 +323,7 @@ func (s *s3Service) versions(ctx context.Context, req *artifact.VersionsRequest)
 	if err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 
 	prefix := buildBlobNamePrefix(appName, userID, sessionID, fileName)
 
@@ -381,7 +381,7 @@ func (s *s3Service) GetArtifactVersion(ctx context.Context, req *artifact.GetArt
 	if err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	version := req.Version
 
 	// If version is 0, resolve to the latest version

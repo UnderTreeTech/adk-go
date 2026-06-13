@@ -1,6 +1,10 @@
 package artifact
 
-import "time"
+import (
+	"crypto/md5"
+	"encoding/hex"
+	"time"
+)
 
 type Config struct {
 	// StorageType 存储类型: disk、s3
@@ -28,4 +32,11 @@ type Config struct {
 	ExpireTime time.Duration
 	// bucket name
 	Bucket string
+}
+
+// HashAppName hashes the app name using MD5 and returns the first 16 characters
+// of the hex digest, to prevent sensitive information from being exposed in storage paths.
+func HashAppName(appName string) string {
+	h := md5.Sum([]byte(appName))
+	return hex.EncodeToString(h[:])[:16]
 }

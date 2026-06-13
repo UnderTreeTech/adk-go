@@ -76,14 +76,14 @@ func (s *diskService) Save(ctx context.Context, req *artifact.SaveRequest) (*art
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	newArtifact := req.Part
 
 	nextVersion := int64(1)
 
 	// Determine next version
 	response, err := s.Versions(ctx, &artifact.VersionsRequest{
-		AppName: req.AppName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
+		AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
 	})
 	if err == nil && len(response.Versions) > 0 {
 		nextVersion = slices.Max(response.Versions) + 1
@@ -119,7 +119,7 @@ func (s *diskService) Delete(ctx context.Context, req *artifact.DeleteRequest) e
 	if err := req.Validate(); err != nil {
 		return fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	version := req.Version
 
 	if version != 0 {
@@ -148,12 +148,12 @@ func (s *diskService) Load(ctx context.Context, req *artifact.LoadRequest) (*art
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	version := req.Version
 
 	if version == 0 {
 		response, err := s.Versions(ctx, &artifact.VersionsRequest{
-			AppName: req.AppName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
+			AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
 		})
 		if err != nil {
 			return nil, err // Versions already returns appropriate error for not found
@@ -203,7 +203,7 @@ func (s *diskService) List(ctx context.Context, req *artifact.ListRequest) (*art
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID := req.AppName, req.UserID, req.SessionID
+	appName, userID, sessionID := at.HashAppName(req.AppName), req.UserID, req.SessionID
 	filenamesSet := map[string]bool{}
 
 	// Fetch filenames for the session
@@ -228,7 +228,7 @@ func (s *diskService) Versions(ctx context.Context, req *artifact.VersionsReques
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 
 	dirPath := s.buildFileDir(appName, userID, sessionID, fileName)
 	entries, err := os.ReadDir(dirPath)
@@ -263,7 +263,7 @@ func (s *diskService) GetArtifactVersion(ctx context.Context, req *artifact.GetA
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
-	appName, userID, sessionID, fileName := req.AppName, req.UserID, req.SessionID, req.FileName
+	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	version := req.Version
 
 	// If version is 0, resolve to the latest version
