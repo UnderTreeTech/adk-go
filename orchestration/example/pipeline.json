@@ -1,0 +1,81 @@
+{
+  "$schema": "https://undertreetech.github.io/adk-go/orchestration/v1",
+  "version": "1",
+  "metadata": {
+    "name": "OrderProcessingPipeline",
+    "description": "订单处理：分类 → 并行[支付+风控] → 合并"
+  },
+  "registries": {
+    "models": [
+      {
+        "ref": "deepseek-v4",
+        "provider": "openai",
+        "config": {
+          "modelName": "deepseek-v4-pro",
+          "apiKeyEnv": "OPENAI_API_KEY",
+          "baseUrlEnv": "OPENAI_BASE_URL"
+        }
+      }
+    ],
+    "callbacks": [
+      {
+        "ref": "skip_if_no_risk_check",
+        "provider": "conditional_skip",
+        "config": {
+          "conditionKey": "needs_risk_check",
+          "outputKey": "risk_result",
+          "defaultValue": "{\"status\":\"auto_approved\",\"risk_level\":\"none\",\"message\":\"小额订单，自动通过风控\"}"
+        }
+      }
+    ]
+  },
+  "agent": {
+    "type": "sequential",
+    "name": "OrderProcessingPipeline",
+    "description": "订单处理流水线：分类 → 并行[支付 + 风控] → 合并完成",
+    "children": [
+      {
+        "type": "llm",
+        "name": "ClassifyOrder",
+        "description": "分析订单，提取订单号、金额，判断是否需要风控审查",
+        "model": {"ref": "deepseek-v4"},
+        "instruction": "你是一个订单分类 Agent。分析用户输入的订单信息，提取以下内容：\n1. 订单号\n2. 订单金额\n\n然后判断是否需要风控审查：\n- 如果金额 >= 10000 元，需要风控审查\n- 如果金额 < 10000 元，不需要风控审查\n\n你的输出必须严格按照以下 JSON 格式（不要输出其他任何内容）：\n{\"order_id\": \"订单号\", \"amount\": 金额数字, \"needs_risk_check\": true或false}\n\n例如：\n用户输入: \"处理订单 #12345，金额 15000 元\"\n你的输出: {\"order_id\": \"#12345\", \"amount\": 15000, \"needs_risk_check\": true}\n\n用户输入: \"处理订单 #67890，金额 500 元\"\n你的输出: {\"order_id\": \"#67890\", \"amount\": 500, \"needs_risk_check\": false}",
+        "outputKey": "order_classification"
+      },
+      {
+        "type": "parallel",
+        "name": "ParallelProcessing",
+        "description": "并行处理支付和风控审查",
+        "children": [
+          {
+            "type": "llm",
+            "name": "PaymentProcess",
+            "description": "支付处理（总是执行）",
+            "model": {"ref": "deepseek-v4"},
+            "instruction": "你是一个支付处理 Agent。根据订单分类信息处理支付。\n\n订单分类信息：\n{order_classification}\n\n请模拟支付处理过程：\n1. 验证支付信息\n2. 冻结金额\n3. 确认支付\n\n输出支付处理结果，格式：\n{\"status\": \"success\", \"message\": \"支付处理完成\", \"transaction_id\": \"TXN-随机8位数字\"}",
+            "outputKey": "payment_result"
+          },
+          {
+            "type": "llm",
+            "name": "RiskCheck",
+            "description": "风控审查（条件执行：仅大额订单）",
+            "model": {"ref": "deepseek-v4"},
+            "instruction": "你是一个风控审查 Agent。对大额订单进行风险评估。\n\n订单分类信息：\n{order_classification}\n\n请执行以下风控检查：\n1. 验证订单金额是否在合理范围\n2. 检查用户信用记录\n3. 进行反欺诈分析\n\n输出风控审查结果，格式：\n{\"status\": \"approved\", \"risk_level\": \"low/medium/high\", \"message\": \"风控审查通过/不通过，原因...\"}",
+            "outputKey": "risk_result",
+            "callbacks": {
+              "beforeAgent": [{"ref": "skip_if_no_risk_check"}]
+            }
+          }
+        ]
+      },
+      {
+        "type": "llm",
+        "name": "MergeAndComplete",
+        "description": "汇聚节点，合并两个分支结果",
+        "model": {"ref": "deepseek-v4"},
+        "instruction": "你是一个订单完成 Agent。汇总支付处理和风控审查的结果，生成最终的订单处理报告。\n\n订单分类信息：\n{order_classification}\n\n支付处理结果：\n{payment_result}\n\n风控审查结果：\n{risk_result}\n\n请生成一份清晰的订单处理报告，包含：\n1. 📋 订单基本信息\n2. 💳 支付处理结果\n3. 🔒 控审查结果（如果是小额订单自动通过，请注明）\n4. ✅ 最终结论：订单是否处理成功\n\n请用友好的格式输出报告。",
+        "outputKey": "final_report"
+      }
+    ]
+  }
+}
