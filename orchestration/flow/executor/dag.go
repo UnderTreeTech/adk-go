@@ -13,6 +13,24 @@ import (
 	"github.com/UnderTreeTech/adk-go/orchestration/flow"
 )
 
+// ConditionEvaluator evaluates whether an edge condition is active.
+// Implementations bridge external state (e.g., session.State) into
+// the DAG layer without creating a direct dependency.
+type ConditionEvaluator interface {
+	// IsActive returns whether the condition identified by stateKey
+	// evaluates to true. When false, the corresponding edge is
+	// deactivated and data does not flow along that path.
+	IsActive(stateKey string) bool
+}
+
+// AlwaysActiveEvaluator is a ConditionEvaluator where every condition
+// is always active. Used when no edge conditions exist (backward
+// compatibility: all edges traversed, equivalent to the current
+// static execution model).
+type AlwaysActiveEvaluator struct{}
+
+func (e *AlwaysActiveEvaluator) IsActive(stateKey string) bool { return true }
+
 // DAG represents a validated directed acyclic graph of flow blocks and edges.
 // It provides topology analysis: level computation, cycle detection,
 // topological sorting, and upstream/downstream queries.
@@ -227,4 +245,92 @@ func (d *DAG) LevelOf(blockID string) int {
 		return level
 	}
 	return -1
+}
+
+// ActiveBlocks computes which blocks are reachable under the given
+// condition evaluator. Uses BFS from zero-in-degree blocks, propagating
+// reachability only along active edges.
+//
+// An edge is active when:
+//   - it has no condition (nil), OR
+//   - evaluator.IsActive(edge.Condition.StateKey) returns true
+//
+// A block is reachable when at least one active edge from a reachable
+// upstream block reaches it. Blocks with in-degree 0 are always reachable.
+//
+// Unreachable blocks should be pruned (not executed). Their SkipOutput
+// (if any) should be written to session state by the executor.
+//
+// When evaluator is nil, all edges are considered active (equivalent
+// to the full static graph — all blocks reachable).
+func (d *DAG) ActiveBlocks(evaluator ConditionEvaluator) map[string]bool {
+	if evaluator == nil {
+		evaluator = &AlwaysActiveEvaluator{}
+	}
+
+	reachable := make(map[string]bool)
+
+	// Initialize: blocks with in-degree 0 are reachable
+	var queue []string
+	for id, deg := range d.inDegree {
+		if deg == 0 {
+			reachable[id] = true
+			queue = append(queue, id)
+		}
+	}
+	sort.Strings(queue) // Deterministic ordering
+
+	// BFS: propagate reachability along active edges
+	for len(queue) > 0 {
+		var nextQueue []string
+		for _, id := range queue {
+			for _, downstream := range d.adjacency[id] {
+				if reachable[downstream] {
+					continue // Already marked reachable
+				}
+				// Check if edge (id → downstream) is active
+				edge := d.findEdge(id, downstream)
+				if edge.Condition != nil && !evaluator.IsActive(edge.Condition.StateKey) {
+					continue // Edge deactivated, do not propagate
+				}
+				// Edge is active, mark downstream as reachable
+				reachable[downstream] = true
+				nextQueue = append(nextQueue, downstream)
+			}
+		}
+		sort.Strings(nextQueue) // Deterministic ordering
+		queue = nextQueue
+	}
+
+	return reachable
+}
+
+// ActiveInDegree returns the number of active incoming edges for a block
+// under the given condition evaluator. Only edges whose condition
+// evaluates to true are counted.
+//
+// When evaluator is nil, returns the full static in-degree.
+func (d *DAG) ActiveInDegree(blockID string, evaluator ConditionEvaluator) int {
+	if evaluator == nil {
+		return d.inDegree[blockID]
+	}
+	count := 0
+	for _, upstream := range d.reverse[blockID] {
+		edge := d.findEdge(upstream, blockID)
+		if edge.Condition == nil || evaluator.IsActive(edge.Condition.StateKey) {
+			count++
+		}
+	}
+	return count
+}
+
+// findEdge returns the edge between sourceID and targetID, or nil if
+// no such edge exists.
+func (d *DAG) findEdge(sourceID, targetID string) *flow.Edge {
+	for i := range d.edges {
+		if d.edges[i].SourceID == sourceID && d.edges[i].TargetID == targetID {
+			return &d.edges[i]
+		}
+	}
+	return nil
 }

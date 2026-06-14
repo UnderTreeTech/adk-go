@@ -110,6 +110,19 @@ type Block struct {
 	// completeness. Optional; if omitted, validation is skipped for
 	// this block's inputs.
 	InputKeys []string `json:"inputKeys,omitempty"`
+
+	// SkipOutput declares the default output value when this block is
+	// skipped (unreachable due to deactivated incoming edges). The value
+	// is written to session state under OutputKey, ensuring downstream
+	// merge nodes always have data to read.
+	//
+	// Constraints:
+	//   - SkipOutput requires OutputKey to be set (validated by parser)
+	//   - SkipOutput is typically a JSON string
+	//
+	// Example:
+	//   skipOutput: `{"status":"auto_approved","risk_level":"none"}`
+	SkipOutput string `json:"skipOutput,omitempty"`
 }
 
 // Edge defines a directed data flow between two blocks in the DAG.
@@ -121,4 +134,25 @@ type Edge struct {
 
 	// TargetID is the block ID that receives the output data.
 	TargetID string `json:"targetId"`
+
+	// Condition defines when this edge is active. When the condition
+	// evaluates to false, the edge is deactivated — data does not flow
+	// along this path, and the target block may become unreachable
+	// (pruned from execution) if all its incoming edges are inactive.
+	//
+	// When nil (the default), the edge is always active, preserving
+	// backward compatibility with schemas that have no conditions.
+	Condition *EdgeCondition `json:"condition,omitempty"`
+}
+
+// EdgeCondition defines the activation condition for an edge.
+// Currently supports only the StateKey mode (referencing a boolean
+// value in session state). Future extensions may add Expression mode.
+type EdgeCondition struct {
+	// StateKey references a boolean value in session state.
+	// When state[StateKey] is true, the edge is active.
+	// When state[StateKey] is false, "false", "0", or "no", the edge
+	// is deactivated and data does not flow along this path.
+	// Must be non-empty when used.
+	StateKey string `json:"stateKey"`
 }

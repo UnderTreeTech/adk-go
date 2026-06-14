@@ -90,6 +90,11 @@ func Validate(schema *flow.FlowSchema) error {
 		} else if !isValidBlockType(block.Type) {
 			errs.addf(path+".type", "invalid block type %q, must be one of %v", block.Type, flow.ValidBlockTypes())
 		}
+
+		// SkipOutput validation: requires OutputKey
+		if block.SkipOutput != "" && block.OutputKey == "" {
+			errs.addf(path+".skipOutput", "block %q has skipOutput but no outputKey", block.ID)
+		}
 	}
 
 	// Validate edges
@@ -120,6 +125,14 @@ func Validate(schema *flow.FlowSchema) error {
 			errs.addf(path, "duplicate edge %s", key)
 		} else {
 			edgeSet[key] = true
+		}
+
+		// EdgeCondition validation
+		if edge.Condition != nil {
+			condPath := path + ".condition"
+			if edge.Condition.StateKey == "" {
+				errs.add(condPath+".stateKey", "must be non-empty")
+			}
 		}
 	}
 

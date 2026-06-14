@@ -301,6 +301,109 @@ func TestNormalizeTrimsWhitespace(t *testing.T) {
 	}
 }
 
+func TestParseValidConditionalEdge(t *testing.T) {
+	jsonStr := `{
+  "version": "2",
+  "metadata": {"name": "ConditionalPipeline"},
+  "blocks": [
+    {"id": "classify", "name": "Classify", "type": "agent", "outputKey": "cls"},
+    {"id": "payment", "name": "Payment", "type": "agent", "outputKey": "pay"},
+    {"id": "risk", "name": "RiskCheck", "type": "agent", "outputKey": "risk",
+     "skipOutput": "{\"status\":\"auto_approved\"}"},
+    {"id": "merge", "name": "Merge", "type": "agent", "outputKey": "final"}
+  ],
+  "edges": [
+    {"sourceId": "classify", "targetId": "payment"},
+    {"sourceId": "classify", "targetId": "risk", "condition": {"stateKey": "needs_risk_check"}},
+    {"sourceId": "payment", "targetId": "merge"},
+    {"sourceId": "risk", "targetId": "merge"}
+  ]
+}`
+
+	schema, err := Parse([]byte(jsonStr))
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+
+	if len(schema.Edges) != 4 {
+		t.Errorf("len(Edges) = %d, want 4", len(schema.Edges))
+	}
+
+	// Verify the conditional edge
+	condEdge := schema.Edges[1]
+	if condEdge.Condition == nil {
+		t.Fatal("Edges[1] should have a condition")
+	}
+	if condEdge.Condition.StateKey != "needs_risk_check" {
+		t.Errorf("Condition.StateKey = %q, want %q", condEdge.Condition.StateKey, "needs_risk_check")
+	}
+
+	// Verify SkipOutput
+	riskBlock := schema.Blocks[2]
+	if riskBlock.SkipOutput != `{"status":"auto_approved"}` {
+		t.Errorf("RiskBlock.SkipOutput = %q, want auto_approved JSON", riskBlock.SkipOutput)
+	}
+}
+
+func TestParseEdgeConditionMissingStateKey(t *testing.T) {
+	jsonStr := `{
+  "version": "2",
+  "metadata": {"name": "Test"},
+  "blocks": [
+    {"id": "a", "name": "A", "type": "agent", "outputKey": "out_a"},
+    {"id": "b", "name": "B", "type": "agent", "outputKey": "out_b"}
+  ],
+  "edges": [
+    {"sourceId": "a", "targetId": "b", "condition": {}}
+  ]
+}`
+
+	_, err := Parse([]byte(jsonStr))
+	if err == nil {
+		t.Fatal("Parse() should fail for EdgeCondition with empty stateKey")
+	}
+	if !containsStr(err.Error(), "stateKey") {
+		t.Errorf("error should mention 'stateKey', got: %v", err)
+	}
+}
+
+func TestParseSkipOutputWithoutOutputKey(t *testing.T) {
+	jsonStr := `{
+  "version": "2",
+  "metadata": {"name": "Test"},
+  "blocks": [
+    {"id": "a", "name": "A", "type": "agent", "skipOutput": "{\"status\":\"skipped\"}"}
+  ],
+  "edges": []
+}`
+
+	_, err := Parse([]byte(jsonStr))
+	if err == nil {
+		t.Fatal("Parse() should fail for block with skipOutput but no outputKey")
+	}
+	if !containsStr(err.Error(), "skipOutput") {
+		t.Errorf("error should mention 'skipOutput', got: %v", err)
+	}
+}
+
+func TestParseSkipOutputWithOutputKey(t *testing.T) {
+	// skipOutput with outputKey should be valid
+	jsonStr := `{
+  "version": "2",
+  "metadata": {"name": "Test"},
+  "blocks": [
+    {"id": "a", "name": "A", "type": "agent", "outputKey": "result", "skipOutput": "{\"status\":\"skipped\"}"},
+    {"id": "b", "name": "B", "type": "agent", "outputKey": "other"}
+  ],
+  "edges": []
+}`
+
+	_, err := Parse([]byte(jsonStr))
+	if err != nil {
+		t.Fatalf("Parse() should succeed for skipOutput with outputKey, got: %v", err)
+	}
+}
+
 // helper
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {

@@ -23,17 +23,22 @@ type BuildConfig struct {
 // Build constructs an adkagent.Agent tree from a validated FlowSchema
 // and pre-built agent instances from the provider.
 //
+// When the schema contains conditional edges (Edge.Condition), Build
+// returns a FlowDAGAgent that evaluates edge conditions at runtime and
+// prunes unreachable blocks. Otherwise, it returns a static agent tree
+// (SequentialAgent containing level groups of ParallelAgents) for
+// maximum efficiency.
+//
 // Algorithm:
 //  1. Construct and validate the DAG from schema blocks and edges
-//  2. Compute topological levels
-//  3. For each level:
+//  2. If any edge has a condition → return FlowDAGAgent (runtime pruning)
+//  3. Otherwise:
+//     a. Compute topological levels
+//     b. For each level:
 //     - Resolve agents from provider for agent-type blocks
 //     - If 1 block: add agent directly to sequential pipeline
 //     - If N blocks: create ParallelAgent containing all N, add to pipeline
-//  4. Return SequentialAgent containing the level groups
-//
-// Start and end blocks are handled as passthrough agents that simply
-// forward their input to the next level.
+//     c. Return SequentialAgent containing the level groups
 func Build(schema *flow.FlowSchema, cfg BuildConfig) (adkagent.Agent, error) {
 	if cfg.Provider == nil {
 		return nil, fmt.Errorf("orchestration/flow/executor: BuildConfig.Provider is required")
@@ -45,10 +50,38 @@ func Build(schema *flow.FlowSchema, cfg BuildConfig) (adkagent.Agent, error) {
 		return nil, fmt.Errorf("orchestration/flow/executor: build DAG: %w", err)
 	}
 
-	// 2. Compute topological levels
+	// 2. If any conditional edges exist, use FlowDAGAgent (runtime pruning)
+	if hasConditionalEdges(schema) {
+		return NewFlowDAGAgent(FlowDAGAgentConfig{
+			Name:     cfg.Name,
+			Schema:   schema,
+			DAG:      dag,
+			Provider: cfg.Provider,
+		})
+	}
+
+	// 3. Otherwise, build static agent tree (no runtime evaluation needed)
+	return buildStatic(dag, schema, cfg)
+}
+
+// hasConditionalEdges returns true if any edge in the schema has a condition.
+func hasConditionalEdges(schema *flow.FlowSchema) bool {
+	for _, edge := range schema.Edges {
+		if edge.Condition != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// buildStatic constructs a static agent tree from the DAG using
+// SequentialAgent and ParallelAgent. This is the original Build logic,
+// used when no edge conditions exist (backward compatible).
+func buildStatic(dag *DAG, schema *flow.FlowSchema, cfg BuildConfig) (adkagent.Agent, error) {
+	// Compute topological levels
 	levels := dag.Levels()
 
-	// 3. Build agent tree from levels
+	// Build agent tree from levels
 	rootName := cfg.Name
 	if rootName == "" {
 		rootName = schema.Metadata.Name
@@ -89,7 +122,7 @@ func Build(schema *flow.FlowSchema, cfg BuildConfig) (adkagent.Agent, error) {
 		}
 	}
 
-	// 4. Create root SequentialAgent
+	// Create root SequentialAgent
 	if len(pipelineAgents) == 0 {
 		return nil, fmt.Errorf("orchestration/flow/executor: no agents to build (empty flow)")
 	}

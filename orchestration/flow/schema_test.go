@@ -194,3 +194,66 @@ func TestFlowSchemaParseFromJSON(t *testing.T) {
 		t.Errorf("Blocks[1].ID = %q, want %q", classifyBlock.ID, "classify")
 	}
 }
+
+func TestEdgeConditionRoundTrip(t *testing.T) {
+	original := FlowSchema{
+		Version: FlowSchemaVersion,
+		Metadata: FlowMetadata{Name: "ConditionalEdgeTest"},
+		Blocks: []Block{
+			{ID: "a", Name: "A", Type: BlockTypeAgent, OutputKey: "out_a"},
+			{ID: "b", Name: "B", Type: BlockTypeAgent, OutputKey: "out_b",
+				SkipOutput: `{"status":"skipped"}`},
+			{ID: "c", Name: "C", Type: BlockTypeAgent, OutputKey: "out_c"},
+		},
+		Edges: []Edge{
+			{SourceID: "a", TargetID: "b", Condition: &EdgeCondition{StateKey: "should_run_b"}},
+			{SourceID: "b", TargetID: "c"},
+		},
+	}
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(original, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent: %v", err)
+	}
+
+	// Unmarshal back
+	var decoded FlowSchema
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	// Verify EdgeCondition
+	if len(decoded.Edges) != 2 {
+		t.Fatalf("len(Edges) = %d, want 2", len(decoded.Edges))
+	}
+	if decoded.Edges[0].Condition == nil {
+		t.Fatal("Edges[0].Condition is nil, want non-nil")
+	}
+	if decoded.Edges[0].Condition.StateKey != "should_run_b" {
+		t.Errorf("Edges[0].Condition.StateKey = %q, want %q", decoded.Edges[0].Condition.StateKey, "should_run_b")
+	}
+	if decoded.Edges[1].Condition != nil {
+		t.Error("Edges[1].Condition should be nil (no condition)")
+	}
+
+	// Verify SkipOutput
+	if decoded.Blocks[1].SkipOutput != `{"status":"skipped"}` {
+		t.Errorf("Blocks[1].SkipOutput = %q, want %q", decoded.Blocks[1].SkipOutput, `{"status":"skipped"}`)
+	}
+	if decoded.Blocks[0].SkipOutput != "" {
+		t.Errorf("Blocks[0].SkipOutput = %q, want empty", decoded.Blocks[0].SkipOutput)
+	}
+}
+
+func TestEdgeConditionOmitWhenNil(t *testing.T) {
+	edge := Edge{SourceID: "a", TargetID: "b"}
+	data, err := json.Marshal(edge)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	// When Condition is nil, it should be omitted from JSON
+	if string(data) != `{"sourceId":"a","targetId":"b"}` {
+		t.Errorf("Marshal edge without condition = %s, want no condition field", string(data))
+	}
+}

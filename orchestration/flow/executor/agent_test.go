@@ -228,3 +228,79 @@ func TestBuildSingleAgent(t *testing.T) {
 		t.Errorf("Agent.Name() = %q, want %q", ag.Name(), "AgentA")
 	}
 }
+
+func TestBuildDiamondWithConditionEdge(t *testing.T) {
+	schema := &flow.FlowSchema{
+		Version:  "2",
+		Metadata: flow.FlowMetadata{Name: "ConditionalDiamond"},
+		Blocks: []flow.Block{
+			{ID: "start", Name: "Start", Type: flow.BlockTypeStart, OutputKey: "user_input"},
+			{ID: "classify", Name: "Classify", Type: flow.BlockTypeAgent, OutputKey: "cls",
+				InputKeys: []string{"user_input"}},
+			{ID: "payment", Name: "Payment", Type: flow.BlockTypeAgent, OutputKey: "pay"},
+			{ID: "risk_check", Name: "RiskCheck", Type: flow.BlockTypeAgent, OutputKey: "risk",
+				InputKeys: []string{"cls"},
+				SkipOutput: `{"status":"auto_approved"}`},
+			{ID: "merge", Name: "Merge", Type: flow.BlockTypeAgent, OutputKey: "final",
+				InputKeys: []string{"pay", "risk"}},
+			{ID: "end", Name: "End", Type: flow.BlockTypeEnd},
+		},
+		Edges: []flow.Edge{
+			{SourceID: "start", TargetID: "classify"},
+			{SourceID: "classify", TargetID: "payment"},
+			{SourceID: "classify", TargetID: "risk_check",
+				Condition: &flow.EdgeCondition{StateKey: "needs_risk_check"}},
+			{SourceID: "payment", TargetID: "merge"},
+			{SourceID: "risk_check", TargetID: "merge"},
+			{SourceID: "merge", TargetID: "end"},
+		},
+	}
+
+	p := provider.NewMapAgentProvider()
+	p.Register("classify", newTestLLMAgent("Classify"))
+	p.Register("payment", newTestLLMAgent("Payment"))
+	p.Register("risk_check", newTestLLMAgent("RiskCheck"))
+	p.Register("merge", newTestLLMAgent("Merge"))
+
+	root, err := Build(schema, BuildConfig{
+		Name:     "ConditionalDiamondPipeline",
+		Provider: p,
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// When schema has conditional edges, Build returns a FlowDAGAgent
+	if root.Name() != "ConditionalDiamondPipeline" {
+		t.Errorf("root.Name() = %q, want %q", root.Name(), "ConditionalDiamondPipeline")
+	}
+}
+
+func TestBuildNoConditionEdgeReturnsStatic(t *testing.T) {
+	// Schema without conditional edges should go through buildStatic path
+	schema := &flow.FlowSchema{
+		Version:  "2",
+		Metadata: flow.FlowMetadata{Name: "SimpleLinear"},
+		Blocks: []flow.Block{
+			{ID: "start", Name: "Start", Type: flow.BlockTypeStart},
+			{ID: "a", Name: "A", Type: flow.BlockTypeAgent, OutputKey: "out_a"},
+			{ID: "end", Name: "End", Type: flow.BlockTypeEnd},
+		},
+		Edges: []flow.Edge{
+			{SourceID: "start", TargetID: "a"},
+			{SourceID: "a", TargetID: "end"},
+		},
+	}
+
+	p := provider.NewMapAgentProvider()
+	p.Register("a", newTestLLMAgent("A"))
+
+	root, err := Build(schema, BuildConfig{Provider: p})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if root.Name() == "" {
+		t.Error("root agent should have a name")
+	}
+}

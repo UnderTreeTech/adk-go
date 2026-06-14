@@ -325,6 +325,295 @@ func TestDAGDisconnectedGraph(t *testing.T) {
 	}
 }
 
+// ---- ConditionEvaluator tests ----
+
+// mapEvaluator is a test ConditionEvaluator backed by a map.
+type mapEvaluator map[string]bool
+
+func (e mapEvaluator) IsActive(stateKey string) bool {
+	return e[stateKey]
+}
+
+func TestDAGActiveBlocksNoCondition(t *testing.T) {
+	// Diamond without conditions: all blocks reachable
+	blocks := []flow.Block{
+		{ID: "classify", Name: "Classify", Type: flow.BlockTypeAgent, OutputKey: "cls"},
+		{ID: "payment", Name: "Payment", Type: flow.BlockTypeAgent, OutputKey: "pay"},
+		{ID: "risk", Name: "Risk", Type: flow.BlockTypeAgent, OutputKey: "risk"},
+		{ID: "merge", Name: "Merge", Type: flow.BlockTypeAgent, OutputKey: "final"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "classify", TargetID: "payment"},
+		{SourceID: "classify", TargetID: "risk"},
+		{SourceID: "payment", TargetID: "merge"},
+		{SourceID: "risk", TargetID: "merge"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// nil evaluator → all reachable
+	active := dag.ActiveBlocks(nil)
+	for _, b := range blocks {
+		if !active[b.ID] {
+			t.Errorf("block %q should be reachable with nil evaluator", b.ID)
+		}
+	}
+
+	// AlwaysActiveEvaluator → all reachable
+	active = dag.ActiveBlocks(&AlwaysActiveEvaluator{})
+	for _, b := range blocks {
+		if !active[b.ID] {
+			t.Errorf("block %q should be reachable with AlwaysActiveEvaluator", b.ID)
+		}
+	}
+}
+
+func TestDAGActiveBlocksDiamondWithCondition(t *testing.T) {
+	// Diamond: classify → {payment, risk_check(condition)} → merge
+	// When needs_risk_check = false, risk_check is unreachable
+	blocks := []flow.Block{
+		{ID: "classify", Name: "Classify", Type: flow.BlockTypeAgent, OutputKey: "cls"},
+		{ID: "payment", Name: "Payment", Type: flow.BlockTypeAgent, OutputKey: "pay"},
+		{ID: "risk_check", Name: "RiskCheck", Type: flow.BlockTypeAgent, OutputKey: "risk"},
+		{ID: "merge", Name: "Merge", Type: flow.BlockTypeAgent, OutputKey: "final"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "classify", TargetID: "payment"},
+		{SourceID: "classify", TargetID: "risk_check", Condition: &flow.EdgeCondition{StateKey: "needs_risk_check"}},
+		{SourceID: "payment", TargetID: "merge"},
+		{SourceID: "risk_check", TargetID: "merge"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// Condition FALSE → risk_check unreachable
+	eval := mapEvaluator{"needs_risk_check": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["classify"] {
+		t.Error("classify should be reachable")
+	}
+	if !active["payment"] {
+		t.Error("payment should be reachable")
+	}
+	if active["risk_check"] {
+		t.Error("risk_check should be UNREACHABLE when condition is false")
+	}
+	if !active["merge"] {
+		t.Error("merge should still be reachable via payment")
+	}
+
+	// Condition TRUE → all reachable
+	eval = mapEvaluator{"needs_risk_check": true}
+	active = dag.ActiveBlocks(eval)
+
+	for _, b := range blocks {
+		if !active[b.ID] {
+			t.Errorf("block %q should be reachable when condition is true", b.ID)
+		}
+	}
+}
+
+func TestDAGActiveBlocksTransitiveSkip(t *testing.T) {
+	// Chain: A → B(condition) → C → D
+	// When condition is false, B is unreachable, and C and D should also be unreachable
+	// (transitive pruning)
+	blocks := []flow.Block{
+		{ID: "a", Name: "A", Type: flow.BlockTypeAgent, OutputKey: "out_a"},
+		{ID: "b", Name: "B", Type: flow.BlockTypeAgent, OutputKey: "out_b"},
+		{ID: "c", Name: "C", Type: flow.BlockTypeAgent, OutputKey: "out_c"},
+		{ID: "d", Name: "D", Type: flow.BlockTypeAgent, OutputKey: "out_d"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "a", TargetID: "b", Condition: &flow.EdgeCondition{StateKey: "run_b"}},
+		{SourceID: "b", TargetID: "c"},
+		{SourceID: "c", TargetID: "d"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// Condition FALSE → B, C, D all unreachable
+	eval := mapEvaluator{"run_b": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["a"] {
+		t.Error("a should be reachable (in-degree 0)")
+	}
+	if active["b"] {
+		t.Error("b should be UNREACHABLE when condition is false")
+	}
+	if active["c"] {
+		t.Error("c should be UNREACHABLE (transitive from b)")
+	}
+	if active["d"] {
+		t.Error("d should be UNREACHABLE (transitive from b)")
+	}
+
+	// Condition TRUE → all reachable
+	eval = mapEvaluator{"run_b": true}
+	active = dag.ActiveBlocks(eval)
+	for _, b := range blocks {
+		if !active[b.ID] {
+			t.Errorf("block %q should be reachable when condition is true", b.ID)
+		}
+	}
+}
+
+func TestDAGActiveBlocksPartialMerge(t *testing.T) {
+	// Merge node with multiple incoming edges, some inactive:
+	//   classify → payment → merge
+	//   classify → risk_check(condition) → merge
+	// When condition is false, risk_check is unreachable but merge is still reachable via payment
+	blocks := []flow.Block{
+		{ID: "classify", Name: "Classify", Type: flow.BlockTypeAgent, OutputKey: "cls"},
+		{ID: "payment", Name: "Payment", Type: flow.BlockTypeAgent, OutputKey: "pay"},
+		{ID: "risk_check", Name: "RiskCheck", Type: flow.BlockTypeAgent, OutputKey: "risk"},
+		{ID: "merge", Name: "Merge", Type: flow.BlockTypeAgent, OutputKey: "final"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "classify", TargetID: "payment"},
+		{SourceID: "classify", TargetID: "risk_check", Condition: &flow.EdgeCondition{StateKey: "needs_risk"}},
+		{SourceID: "payment", TargetID: "merge"},
+		{SourceID: "risk_check", TargetID: "merge"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	eval := mapEvaluator{"needs_risk": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["classify"] {
+		t.Error("classify should be reachable")
+	}
+	if !active["payment"] {
+		t.Error("payment should be reachable")
+	}
+	if active["risk_check"] {
+		t.Error("risk_check should be UNREACHABLE when condition is false")
+	}
+	if !active["merge"] {
+		t.Error("merge should be reachable via payment (even though risk_check is unreachable)")
+	}
+}
+
+func TestDAGActiveBlocksTransitiveWithMerge(t *testing.T) {
+	// Complex case: condition branch has downstream that feeds into merge
+	//   classify → payment → merge
+	//   classify → risk_check(condition) → risk_detail → merge
+	// When condition is false: risk_check and risk_detail unreachable, merge reachable via payment
+	blocks := []flow.Block{
+		{ID: "classify", Name: "Classify", Type: flow.BlockTypeAgent, OutputKey: "cls"},
+		{ID: "payment", Name: "Payment", Type: flow.BlockTypeAgent, OutputKey: "pay"},
+		{ID: "risk_check", Name: "RiskCheck", Type: flow.BlockTypeAgent, OutputKey: "risk"},
+		{ID: "risk_detail", Name: "RiskDetail", Type: flow.BlockTypeAgent, OutputKey: "risk_detail"},
+		{ID: "merge", Name: "Merge", Type: flow.BlockTypeAgent, OutputKey: "final"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "classify", TargetID: "payment"},
+		{SourceID: "classify", TargetID: "risk_check", Condition: &flow.EdgeCondition{StateKey: "needs_risk"}},
+		{SourceID: "payment", TargetID: "merge"},
+		{SourceID: "risk_check", TargetID: "risk_detail"},
+		{SourceID: "risk_detail", TargetID: "merge"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	eval := mapEvaluator{"needs_risk": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["classify"] {
+		t.Error("classify should be reachable")
+	}
+	if !active["payment"] {
+		t.Error("payment should be reachable")
+	}
+	if active["risk_check"] {
+		t.Error("risk_check should be UNREACHABLE")
+	}
+	if active["risk_detail"] {
+		t.Error("risk_detail should be UNREACHABLE (transitive)")
+	}
+	if !active["merge"] {
+		t.Error("merge should be reachable via payment")
+	}
+}
+
+func TestDAGActiveInDegreeWithCondition(t *testing.T) {
+	blocks := []flow.Block{
+		{ID: "a", Name: "A", Type: flow.BlockTypeAgent, OutputKey: "out_a"},
+		{ID: "b", Name: "B", Type: flow.BlockTypeAgent, OutputKey: "out_b"},
+		{ID: "c", Name: "C", Type: flow.BlockTypeAgent, OutputKey: "out_c"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "a", TargetID: "c"},
+		{SourceID: "b", TargetID: "c", Condition: &flow.EdgeCondition{StateKey: "run_b"}},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// Full in-degree
+	if dag.ActiveInDegree("c", nil) != 2 {
+		t.Errorf("ActiveInDegree(c, nil) = %d, want 2", dag.ActiveInDegree("c", nil))
+	}
+
+	// With condition false
+	eval := mapEvaluator{"run_b": false}
+	if dag.ActiveInDegree("c", eval) != 1 {
+		t.Errorf("ActiveInDegree(c, false) = %d, want 1", dag.ActiveInDegree("c", eval))
+	}
+
+	// With condition true
+	eval = mapEvaluator{"run_b": true}
+	if dag.ActiveInDegree("c", eval) != 2 {
+		t.Errorf("ActiveInDegree(c, true) = %d, want 2", dag.ActiveInDegree("c", eval))
+	}
+}
+
+func TestDAGFindEdge(t *testing.T) {
+	blocks := []flow.Block{
+		{ID: "a", Name: "A", Type: flow.BlockTypeAgent},
+		{ID: "b", Name: "B", Type: flow.BlockTypeAgent},
+	}
+	edges := []flow.Edge{
+		{SourceID: "a", TargetID: "b", Condition: &flow.EdgeCondition{StateKey: "cond"}},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	edge := dag.findEdge("a", "b")
+	if edge == nil {
+		t.Fatal("findEdge(a,b) should not be nil")
+	}
+	if edge.Condition == nil || edge.Condition.StateKey != "cond" {
+		t.Error("findEdge should return edge with condition")
+	}
+
+	if dag.findEdge("b", "a") != nil {
+		t.Error("findEdge(b,a) should be nil (no such edge)")
+	}
+}
+
 // ---- Helpers ----
 
 func levelIDs(blocks []flow.Block) []string {

@@ -22,6 +22,9 @@ bin/
 .kite/
 .sourcery/
 
+# Claude Code context archives (session-local, not for version control)
+.claude
+
 # IDE
 .idea/
 .vscode/
