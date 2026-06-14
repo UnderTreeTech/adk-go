@@ -1,0 +1,63 @@
+{
+  "version": "2",
+  "metadata": {
+    "name": "GovServicePreReview",
+    "description": "政务服务 '一次办好' 智能预审 — 入口→材料接收→完整性审核→真实性核验→智能引导提示→输出"
+  },
+  "blocks": [
+    {
+      "id": "entry",
+      "name": "政务服务入口",
+      "type": "start",
+      "outputKey": "user_input",
+      "description": "接收市民提交的办事材料和基础信息"
+    },
+    {
+      "id": "material_receive",
+      "name": "材料接收智能体",
+      "type": "agent",
+      "outputKey": "material_result",
+      "inputKeys": ["user_input"],
+      "description": "统一接收、标准化处理市民上传的办事材料，为后续审核环节提供结构化数据支撑"
+    },
+    {
+      "id": "completeness_review",
+      "name": "完整性审核智能体",
+      "type": "agent",
+      "outputKey": "completeness_result",
+      "inputKeys": ["material_result"],
+      "description": "对照政务事项标准材料清单，核验市民上传材料的完整性、合规性"
+    },
+    {
+      "id": "auth_verify",
+      "name": "真实性核验智能体",
+      "type": "agent",
+      "outputKey": "auth_result",
+      "inputKeys": ["material_result", "completeness_result"],
+      "description": "核验市民上传材料的真实性、一致性，防范虚假材料、信息造假问题"
+    },
+    {
+      "id": "smart_guide",
+      "name": "智能引导提示智能体",
+      "type": "agent",
+      "outputKey": "guide_result",
+      "inputKeys": ["completeness_result", "auth_result"],
+      "description": "基于审核结果，生成清晰、易懂、可执行的市民端引导提示"
+    },
+    {
+      "id": "output",
+      "name": "最终输出",
+      "type": "end",
+      "description": "输出最终审核结果和引导提示"
+    }
+  ],
+  "edges": [
+    {"sourceId": "entry",              "targetId": "material_receive"},
+    {"sourceId": "material_receive",   "targetId": "completeness_review"},
+    {"sourceId": "material_receive",   "targetId": "auth_verify"},
+    {"sourceId": "completeness_review","targetId": "auth_verify"},
+    {"sourceId": "completeness_review","targetId": "smart_guide"},
+    {"sourceId": "auth_verify",        "targetId": "smart_guide"},
+    {"sourceId": "smart_guide",        "targetId": "output"}
+  ]
+}
