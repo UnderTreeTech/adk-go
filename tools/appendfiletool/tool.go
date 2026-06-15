@@ -136,14 +136,14 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		// 大文件分块生成逻辑（需要临时文件）
 		// 如果没有临时文件，创建一个
 		if tempFilePath == "" {
-			// 构建唯一的临时文件名，包含 appName, userID, sessionID 和 filename
+			// 构建唯一的临时文件名，包含 appName(哈希脱敏), userID, sessionID 和 filename
 			// 使用下划线替换文件名中的特殊字符，避免路径问题
 			safeFileName := strings.ReplaceAll(args.FileName, "/", "_")
 			safeFileName = strings.ReplaceAll(safeFileName, "\\", "_")
 
 			// 创建临时文件名模式，确保多用户、多会话不会冲突
 			pattern := fmt.Sprintf("append_%s_%s_%s_%s_*.tmp",
-				ctx.AppName(), ctx.UserID(), ctx.SessionID(), safeFileName)
+				at.HashAppName(ctx.AppName()), ctx.UserID(), ctx.SessionID(), safeFileName)
 
 			// 使用系统临时目录创建临时文件
 			file, err := os.CreateTemp("", pattern)
@@ -156,7 +156,7 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 			log.Debug(ctx, "creating new temp file for large file generation",
 				log.String("filename", args.FileName),
 				log.String("temp_path", tempFilePath),
-				log.String("appName", ctx.AppName()),
+				log.String("appName", at.HashAppName(ctx.AppName())),
 				log.String("userID", ctx.UserID()),
 				log.String("sessionID", ctx.SessionID()))
 		} else {

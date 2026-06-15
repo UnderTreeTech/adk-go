@@ -53,7 +53,7 @@ func CleanMarkdownCodeBlock(filename, content string) string {
 // GenerateFileURL 生成文件下载URL
 // 参数:
 //   - cfg: artifact配置
-//   - appName: 应用名称
+//   - appName: 应用名称（会进行MD5哈希脱敏，与artifact存储路径对齐）
 //   - userID: 用户ID
 //   - sessionID: 会话ID
 //   - fileName: 文件名
@@ -62,6 +62,8 @@ func CleanMarkdownCodeBlock(filename, content string) string {
 // 返回:
 //   - 文件下载URL
 func GenerateFileURL(cfg *at.Config, appName, userID, sessionID, fileName string, version int64) string {
+	// 对appName进行哈希脱敏，与artifact存储路径中的哈希规则对齐
+	hashedAppName := at.HashAppName(appName)
 	if cfg.StorageType == "s3" {
 		schema := cfg.ExternalSchema
 		if schema == "" {
@@ -73,11 +75,11 @@ func GenerateFileURL(cfg *at.Config, appName, userID, sessionID, fileName string
 		}
 		// S3 URL 格式: {schema}://{endpoint}/{bucket}/{appName}/{userID}/{sessionID}/{fileName}/{version}
 		return fmt.Sprintf("%s://%s/%s/%s/%s/%s/%s/%d",
-			schema, endpoint, cfg.Bucket, appName, userID, sessionID, fileName, version)
+			schema, endpoint, cfg.Bucket, hashedAppName, userID, sessionID, fileName, version)
 	} else {
 		// 磁盘存储 URL 格式: {FsBaseUrl}/{appName}/{userID}/{sessionID}/{fileName}/{version}
 		return fmt.Sprintf("%s/%s/%s/%s/%s/%d",
-			cfg.FsBaseUrl, appName, userID, sessionID, fileName, version)
+			cfg.FsBaseUrl, hashedAppName, userID, sessionID, fileName, version)
 	}
 }
 
