@@ -614,6 +614,323 @@ func TestDAGFindEdge(t *testing.T) {
 	}
 }
 
+func TestDAGActiveBlocksMultipleConditions(t *testing.T) {
+	// classify → {payment, risk_check(cond:needs_risk), intl_verify(cond:is_intl)} → merge
+	// Both conditions false: risk_check and intl_verify unreachable
+	blocks := []flow.Block{
+		{ID: "classify", Name: "Classify", Type: flow.BlockTypeAgent, OutputKey: "cls"},
+		{ID: "payment", Name: "Payment", Type: flow.BlockTypeAgent, OutputKey: "pay"},
+		{ID: "risk_check", Name: "RiskCheck", Type: flow.BlockTypeAgent, OutputKey: "risk"},
+		{ID: "intl_verify", Name: "IntlVerify", Type: flow.BlockTypeAgent, OutputKey: "intl"},
+		{ID: "merge", Name: "Merge", Type: flow.BlockTypeAgent, OutputKey: "final"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "classify", TargetID: "payment"},
+		{SourceID: "classify", TargetID: "risk_check", Condition: &flow.EdgeCondition{StateKey: "needs_risk"}},
+		{SourceID: "classify", TargetID: "intl_verify", Condition: &flow.EdgeCondition{StateKey: "is_intl"}},
+		{SourceID: "payment", TargetID: "merge"},
+		{SourceID: "risk_check", TargetID: "merge"},
+		{SourceID: "intl_verify", TargetID: "merge"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// Both conditions false
+	eval := mapEvaluator{"needs_risk": false, "is_intl": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["classify"] {
+		t.Error("classify should be reachable")
+	}
+	if !active["payment"] {
+		t.Error("payment should be reachable")
+	}
+	if active["risk_check"] {
+		t.Error("risk_check should be UNREACHABLE")
+	}
+	if active["intl_verify"] {
+		t.Error("intl_verify should be UNREACHABLE")
+	}
+	if !active["merge"] {
+		t.Error("merge should be reachable via payment")
+	}
+
+	// Only risk condition true
+	eval = mapEvaluator{"needs_risk": true, "is_intl": false}
+	active = dag.ActiveBlocks(eval)
+	if !active["risk_check"] {
+		t.Error("risk_check should be reachable when condition is true")
+	}
+	if active["intl_verify"] {
+		t.Error("intl_verify should still be UNREACHABLE")
+	}
+	if !active["merge"] {
+		t.Error("merge should be reachable")
+	}
+}
+
+func TestDAGActiveBlocksNestedDiamond(t *testing.T) {
+	// Nested diamond: branch "legal" has its own internal conditional sub-diamond
+	//   start → {legal, tech_eval}
+	//   legal → {doc_review, compliance(cond:is_regulated)}
+	//   doc_review → legal_merge, compliance → legal_merge
+	//   legal_merge → final_merge, tech_eval → final_merge
+	blocks := []flow.Block{
+		{ID: "start", Name: "Start", Type: flow.BlockTypeStart},
+		{ID: "legal", Name: "Legal", Type: flow.BlockTypeAgent, OutputKey: "legal_out"},
+		{ID: "tech_eval", Name: "TechEval", Type: flow.BlockTypeAgent, OutputKey: "tech_out"},
+		{ID: "doc_review", Name: "DocReview", Type: flow.BlockTypeAgent, OutputKey: "doc_out"},
+		{ID: "compliance", Name: "Compliance", Type: flow.BlockTypeAgent, OutputKey: "comp_out"},
+		{ID: "legal_merge", Name: "LegalMerge", Type: flow.BlockTypeAgent, OutputKey: "legal_merge_out"},
+		{ID: "final_merge", Name: "FinalMerge", Type: flow.BlockTypeAgent, OutputKey: "final_out"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "start", TargetID: "legal"},
+		{SourceID: "start", TargetID: "tech_eval"},
+		{SourceID: "legal", TargetID: "doc_review"},
+		{SourceID: "legal", TargetID: "compliance", Condition: &flow.EdgeCondition{StateKey: "is_regulated"}},
+		{SourceID: "doc_review", TargetID: "legal_merge"},
+		{SourceID: "compliance", TargetID: "legal_merge"},
+		{SourceID: "legal_merge", TargetID: "final_merge"},
+		{SourceID: "tech_eval", TargetID: "final_merge"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// Condition false: compliance unreachable, but legal_merge still reachable via doc_review
+	eval := mapEvaluator{"is_regulated": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["start"] {
+		t.Error("start should be reachable")
+	}
+	if !active["legal"] {
+		t.Error("legal should be reachable")
+	}
+	if !active["tech_eval"] {
+		t.Error("tech_eval should be reachable")
+	}
+	if !active["doc_review"] {
+		t.Error("doc_review should be reachable")
+	}
+	if active["compliance"] {
+		t.Error("compliance should be UNREACHABLE when is_regulated=false")
+	}
+	if !active["legal_merge"] {
+		t.Error("legal_merge should be reachable via doc_review (even though compliance is unreachable)")
+	}
+	if !active["final_merge"] {
+		t.Error("final_merge should be reachable")
+	}
+
+	// Condition true: all reachable
+	eval = mapEvaluator{"is_regulated": true}
+	active = dag.ActiveBlocks(eval)
+	for _, b := range blocks {
+		if !active[b.ID] {
+			t.Errorf("block %q should be reachable when condition is true", b.ID)
+		}
+	}
+}
+
+func TestDAGActiveBlocksAllBranchesPruned(t *testing.T) {
+	// gate → {feature_A(cond:enable_a), feature_B(cond:enable_b), feature_C(cond:enable_c)}
+	// All features → aggregate → output
+	// When ALL conditions are false: aggregate and output are also unreachable
+	blocks := []flow.Block{
+		{ID: "gate", Name: "Gate", Type: flow.BlockTypeAgent, OutputKey: "gate_out"},
+		{ID: "feature_a", Name: "FeatureA", Type: flow.BlockTypeAgent, OutputKey: "fa_out"},
+		{ID: "feature_b", Name: "FeatureB", Type: flow.BlockTypeAgent, OutputKey: "fb_out"},
+		{ID: "feature_c", Name: "FeatureC", Type: flow.BlockTypeAgent, OutputKey: "fc_out"},
+		{ID: "aggregate", Name: "Aggregate", Type: flow.BlockTypeAgent, OutputKey: "agg_out"},
+		{ID: "output", Name: "Output", Type: flow.BlockTypeAgent, OutputKey: "out"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "gate", TargetID: "feature_a", Condition: &flow.EdgeCondition{StateKey: "enable_a"}},
+		{SourceID: "gate", TargetID: "feature_b", Condition: &flow.EdgeCondition{StateKey: "enable_b"}},
+		{SourceID: "gate", TargetID: "feature_c", Condition: &flow.EdgeCondition{StateKey: "enable_c"}},
+		{SourceID: "feature_a", TargetID: "aggregate"},
+		{SourceID: "feature_b", TargetID: "aggregate"},
+		{SourceID: "feature_c", TargetID: "aggregate"},
+		{SourceID: "aggregate", TargetID: "output"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// All conditions false → only gate reachable, everything else pruned
+	eval := mapEvaluator{"enable_a": false, "enable_b": false, "enable_c": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["gate"] {
+		t.Error("gate should be reachable (in-degree 0)")
+	}
+	if active["feature_a"] {
+		t.Error("feature_a should be UNREACHABLE")
+	}
+	if active["feature_b"] {
+		t.Error("feature_b should be UNREACHABLE")
+	}
+	if active["feature_c"] {
+		t.Error("feature_c should be UNREACHABLE")
+	}
+	if active["aggregate"] {
+		t.Error("aggregate should be UNREACHABLE (all incoming edges from unreachable nodes)")
+	}
+	if active["output"] {
+		t.Error("output should be UNREACHABLE (transitive from aggregate)")
+	}
+
+	// Only one condition true
+	eval = mapEvaluator{"enable_a": true, "enable_b": false, "enable_c": false}
+	active = dag.ActiveBlocks(eval)
+
+	if !active["feature_a"] {
+		t.Error("feature_a should be reachable when enable_a=true")
+	}
+	if !active["aggregate"] {
+		t.Error("aggregate should be reachable via feature_a")
+	}
+	if !active["output"] {
+		t.Error("output should be reachable")
+	}
+}
+
+func TestDAGActiveBlocksCascadeSubtree(t *testing.T) {
+	// Deep cascade: condition node's entire subtree gets pruned
+	//   entry → pre_check → {deep_scan(cond:needs_deep), quick_scan}
+	//   deep_scan → {vuln_analysis, license_check}
+	//   vuln_analysis → vul_merge, license_check → vul_merge
+	//   quick_scan → enrich
+	//   enrich → report, vul_merge → report
+	blocks := []flow.Block{
+		{ID: "entry", Name: "Entry", Type: flow.BlockTypeStart},
+		{ID: "pre_check", Name: "PreCheck", Type: flow.BlockTypeAgent, OutputKey: "pre_out"},
+		{ID: "deep_scan", Name: "DeepScan", Type: flow.BlockTypeAgent, OutputKey: "deep_out"},
+		{ID: "quick_scan", Name: "QuickScan", Type: flow.BlockTypeAgent, OutputKey: "quick_out"},
+		{ID: "vuln_analysis", Name: "VulnAnalysis", Type: flow.BlockTypeAgent, OutputKey: "vuln_out"},
+		{ID: "license_check", Name: "LicenseCheck", Type: flow.BlockTypeAgent, OutputKey: "lic_out"},
+		{ID: "vul_merge", Name: "VulMerge", Type: flow.BlockTypeAgent, OutputKey: "vul_merge_out"},
+		{ID: "enrich", Name: "Enrich", Type: flow.BlockTypeAgent, OutputKey: "enrich_out"},
+		{ID: "report", Name: "Report", Type: flow.BlockTypeAgent, OutputKey: "report_out"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "entry", TargetID: "pre_check"},
+		{SourceID: "pre_check", TargetID: "deep_scan", Condition: &flow.EdgeCondition{StateKey: "needs_deep"}},
+		{SourceID: "pre_check", TargetID: "quick_scan"},
+		{SourceID: "deep_scan", TargetID: "vuln_analysis"},
+		{SourceID: "deep_scan", TargetID: "license_check"},
+		{SourceID: "vuln_analysis", TargetID: "vul_merge"},
+		{SourceID: "license_check", TargetID: "vul_merge"},
+		{SourceID: "quick_scan", TargetID: "enrich"},
+		{SourceID: "enrich", TargetID: "report"},
+		{SourceID: "vul_merge", TargetID: "report"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// Condition false: deep_scan subtree entirely pruned
+	eval := mapEvaluator{"needs_deep": false}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["entry"] {
+		t.Error("entry should be reachable")
+	}
+	if !active["pre_check"] {
+		t.Error("pre_check should be reachable")
+	}
+	if active["deep_scan"] {
+		t.Error("deep_scan should be UNREACHABLE")
+	}
+	if !active["quick_scan"] {
+		t.Error("quick_scan should be reachable")
+	}
+	// Entire deep_scan subtree should be unreachable
+	if active["vuln_analysis"] {
+		t.Error("vuln_analysis should be UNREACHABLE (transitive)")
+	}
+	if active["license_check"] {
+		t.Error("license_check should be UNREACHABLE (transitive)")
+	}
+	if active["vul_merge"] {
+		t.Error("vul_merge should be UNREACHABLE (all incoming edges from unreachable nodes)")
+	}
+	// But enrich and report should be reachable via quick_scan
+	if !active["enrich"] {
+		t.Error("enrich should be reachable via quick_scan")
+	}
+	if !active["report"] {
+		t.Error("report should be reachable via enrich (even though vul_merge is unreachable)")
+	}
+}
+
+func TestDAGActiveBlocksDualSource(t *testing.T) {
+	// Two independent sources, each with conditional branches, merging at final
+	//   source_A → {process_A1, process_A2(cond:cond_a2)} → final
+	//   source_B → {process_B1, process_B2(cond:cond_b2)} → final
+	blocks := []flow.Block{
+		{ID: "source_a", Name: "SourceA", Type: flow.BlockTypeAgent, OutputKey: "sa_out"},
+		{ID: "source_b", Name: "SourceB", Type: flow.BlockTypeAgent, OutputKey: "sb_out"},
+		{ID: "process_a1", Name: "ProcessA1", Type: flow.BlockTypeAgent, OutputKey: "a1_out"},
+		{ID: "process_a2", Name: "ProcessA2", Type: flow.BlockTypeAgent, OutputKey: "a2_out"},
+		{ID: "process_b1", Name: "ProcessB1", Type: flow.BlockTypeAgent, OutputKey: "b1_out"},
+		{ID: "process_b2", Name: "ProcessB2", Type: flow.BlockTypeAgent, OutputKey: "b2_out"},
+		{ID: "final", Name: "Final", Type: flow.BlockTypeAgent, OutputKey: "final_out"},
+	}
+	edges := []flow.Edge{
+		{SourceID: "source_a", TargetID: "process_a1"},
+		{SourceID: "source_a", TargetID: "process_a2", Condition: &flow.EdgeCondition{StateKey: "cond_a2"}},
+		{SourceID: "source_b", TargetID: "process_b1"},
+		{SourceID: "source_b", TargetID: "process_b2", Condition: &flow.EdgeCondition{StateKey: "cond_b2"}},
+		{SourceID: "process_a1", TargetID: "final"},
+		{SourceID: "process_a2", TargetID: "final"},
+		{SourceID: "process_b1", TargetID: "final"},
+		{SourceID: "process_b2", TargetID: "final"},
+	}
+
+	dag, err := NewDAG(blocks, edges)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+
+	// cond_a2=false, cond_b2=true
+	eval := mapEvaluator{"cond_a2": false, "cond_b2": true}
+	active := dag.ActiveBlocks(eval)
+
+	if !active["source_a"] {
+		t.Error("source_a should be reachable (in-degree 0)")
+	}
+	if !active["source_b"] {
+		t.Error("source_b should be reachable (in-degree 0)")
+	}
+	if !active["process_a1"] {
+		t.Error("process_a1 should be reachable")
+	}
+	if active["process_a2"] {
+		t.Error("process_a2 should be UNREACHABLE (cond_a2=false)")
+	}
+	if !active["process_b1"] {
+		t.Error("process_b1 should be reachable")
+	}
+	if !active["process_b2"] {
+		t.Error("process_b2 should be reachable (cond_b2=true)")
+	}
+	if !active["final"] {
+		t.Error("final should be reachable (has active incoming edges from a1, b1, b2)")
+	}
+}
+
 // ---- Helpers ----
 
 func levelIDs(blocks []flow.Block) []string {

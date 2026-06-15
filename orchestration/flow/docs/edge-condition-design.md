@@ -84,6 +84,225 @@ classify ┤                                          ├── merge
               → merge 只等 payment
 ```
 
+**多条件边同时不激活（多条边独立控制）**：
+
+```
+                 ┌── payment ─────────────────────────────────┐
+                 │                                            │
+classify ────────┤                                            ├── merge ── end
+                 │                                            │
+                 ├── risk_check ──(cond: needs_risk)──→ risk_detail ──┤
+                 │                                            │
+                 └── intl_verify ──(cond: is_international)──┘
+
+  假设 state:
+    needs_risk = false
+    is_international = false
+
+  可达性分析：
+    1. classify → 可达 ✅ (入度=0)
+    2. classify → payment (无条件) → payment 可达 ✅
+    3. classify → risk_check (cond=false) → 边不活跃 → risk_check 不可达 ❌
+    4. classify → intl_verify (cond=false) → 边不活跃 → intl_verify 不可达 ❌
+    5. risk_check → risk_detail (来源不可达) → risk_detail 不可达 ❌
+    6. merge 的三条入边中，只有 payment→merge 活跃
+       → merge 可达 ✅，有效入度=1
+
+  执行结果：
+    Level 0: classify → 执行
+    Level 1: payment → 执行; risk_check → 跳过(写默认值); intl_verify → 跳过(写默认值)
+    Level 2: risk_detail → 跳过(写默认值)
+    Level 3: merge → 执行(读到 payment_result + risk_detail默认值 + intl_verify默认值)
+
+  ★ 关键点：多条条件边可以独立控制不同分支的跳过，互不干扰
+```
+
+**菱形嵌套（分支内部也有菱形归并）**：
+
+```
+                      ┌── doc_review ────────────────────┐
+                      │                                   │
+       ┌── legal ─────┤                                   ├── legal_merge ──┐
+       │              │                                   │                 │
+       │              └── compliance ─(cond: is_regulated)─┘                 │
+       │                                                                    │
+start ─┤                                                                    ├── final_merge
+       │                                                                    │
+       └── tech_eval ─────────────────────────────────────────────────────┘
+
+  假设 state["is_regulated"] = false
+
+  可达性分析：
+    1. start → 可达 ✅
+    2. start → legal (无条件) → legal 可达 ✅
+    3. start → tech_eval (无条件) → tech_eval 可达 ✅
+    4. legal → doc_review (无条件) → doc_review 可达 ✅
+    5. legal → compliance (cond=false) → compliance 不可达 ❌
+    6. doc_review → legal_merge (来源可达) → legal_merge 可达 ✅
+    7. compliance → legal_merge (来源不可达，但 doc_review→legal_merge 仍活跃)
+       → legal_merge 已标记可达，无影响
+    8. legal_merge → final_merge → final_merge 可达 ✅
+    9. tech_eval → final_merge → 已标记可达
+
+  执行结果：
+    Level 0: start → 执行
+    Level 1: legal, tech_eval → 并行执行
+    Level 2: doc_review → 执行; compliance → 跳过(写默认值)
+    Level 3: legal_merge → 执行(读到 doc_review_result + compliance默认值)
+    Level 4: final_merge → 执行(读到 legal_merge_result + tech_eval_result)
+
+  ★ 关键点：分支内部的条件边只影响分支内部的子图，不影响外部菱形结构
+```
+
+**扇出-扇入（一个节点扇出多个条件分支，再汇聚到同一点）**：
+
+```
+         ┌── feature_A ──(cond: enable_a)──┐
+         │                                  │
+  gate ──┼── feature_B ──(cond: enable_b)──┼── aggregate ── output
+         │                                  │
+         └── feature_C ──(cond: enable_c)──┘
+
+  场景 1: enable_a=true, enable_b=false, enable_c=true
+    → feature_A 可达 ✅, feature_B 不可达 ❌, feature_C 可达 ✅
+    → aggregate 有效入度=2 (from A and C)
+    → 执行: gate → {A, C} 并行 → aggregate(读到A实际结果 + B默认值 + C实际结果)
+
+  场景 2: enable_a=false, enable_b=false, enable_c=false
+    → feature_A/B/C 全部不可达 ❌
+    → aggregate 的所有入边都不活跃 → aggregate 不可达 ❌
+    → output 的唯一入边也不活跃 → output 不可达 ❌
+    → 只有 gate 执行，其余全部跳过
+
+  场景 3: enable_a=true, enable_b=true, enable_c=true
+    → 全部可达 ✅（退化为无条件全路径执行）
+    → 执行: gate → {A, B, C} 并行 → aggregate → output
+
+  ★ 关键点：
+    - 同一扇出节点的多条条件边可以有不同的激活状态
+    - 当所有分支都被剪枝时，汇聚点及更下游也被连带剪枝
+    - 全部条件为 true 时完全等价于无条件执行（向后兼容）
+```
+
+**双源汇聚（两个独立起点各自有条件分支，最终汇聚）**：
+
+```
+  source_A ──┬── process_A1 ──────────────────────┐
+             │                                      │
+             └── process_A2 ──(cond: cond_a2)──┐   │
+                                              │   │
+                                              ├── final
+                                              │
+  source_B ──┬── process_B1 ──────────────────┘
+             │
+             └── process_B2 ──(cond: cond_b2)──┘
+
+  注意: source_A 和 source_B 都是入度=0的起点
+
+  假设 state: cond_a2=false, cond_b2=true
+
+  可达性分析：
+    1. source_A (入度=0) → 可达 ✅
+    2. source_B (入度=0) → 可达 ✅
+    3. source_A → process_A1 (无条件) → process_A1 可达 ✅
+    4. source_A → process_A2 (cond=false) → process_A2 不可达 ❌
+    5. source_B → process_B1 (无条件) → process_B1 可达 ✅
+    6. source_B → process_B2 (cond=true) → process_B2 可达 ✅
+    7. process_A1 → final → final 可达 ✅
+    8. process_A2 → final (来源不可达，但 final 已可达)
+    9. process_B1 → final (已可达)
+    10. process_B2 → final (已可达)
+
+  执行结果：
+    Level 0: source_A, source_B → 并行执行
+    Level 1: process_A1, process_B1, process_B2 → 并行执行
+             process_A2 → 跳过(写默认值)
+    Level 2: final → 执行(读到 A1实际 + A2默认 + B1实际 + B2实际)
+
+  ★ 关键点：
+    - 多起点 DAG 的每个起点都独立可达
+    - 不同起点的条件边互不影响
+    - final 汇聚节点只需至少一条活跃入边即可到达
+```
+
+**条件边的下游又扇出到多个节点（剪枝级联扇出）**：
+
+```
+  entry ──→ pre_check ──┬── deep_scan ──(cond: needs_deep)──┬── enrich ──→ report
+                         │                                   │
+                         └── quick_scan ─────────────────────┘
+
+  但 deep_scan 还有自己的扇出:
+  deep_scan ──┬── vulnerability_analysis ──→ vul_merge
+               │                                    ↑
+               └── license_check ───────────────────┘
+
+  完整 DAG:
+                                  ┌── vuln_analysis ──┐
+  entry → pre_check → deep_scan ─┤                    ├── vul_merge ──┐
+                      (cond)       └── license_check ─┘                │
+                                                                         │
+              pre_check → quick_scan ────────────────→ enrich ────────→ report
+
+  假设 state["needs_deep"] = false
+
+  可达性分析：
+    1. entry → 可达 ✅
+    2. pre_check → 可达 ✅
+    3. deep_scan (cond=false) → 不可达 ❌
+    4. quick_scan → 可达 ✅
+    5. vuln_analysis (唯一入边来自 deep_scan) → 不可达 ❌
+    6. license_check (唯一入边来自 deep_scan) → 不可达 ❌
+    7. vul_merge (两条入边都不活跃) → 不可达 ❌
+    8. enrich (来自 quick_scan，可达) → 可达 ✅
+    9. report (来自 enrich 和 vul_merge，enrich 活跃) → 可达 ✅
+
+  执行结果：
+    Level 0: entry → 执行
+    Level 1: pre_check → 执行
+    Level 2: quick_scan → 执行; deep_scan → 跳过(写默认值)
+    Level 3: vuln_analysis → 跳过; license_check → 跳过
+    Level 4: vul_merge → 跳过(写默认值); enrich → 执行
+    Level 5: report → 执行(读到 enrich_result + vul_merge默认值)
+
+  ★ 关键点：
+    - 条件边不激活导致整棵子树 (deep_scan → vuln_analysis, license_check → vul_merge) 被剪枝
+    - 剪枝的级联深度不限，沿 DAG 向下传播直到遇到有其他活跃入边的节点
+    - report 虽然有来自 vul_merge 的入边（不活跃），但 enrich 的入边活跃，所以 report 仍可达
+```
+
+**同一汇聚节点的部分条件入边活跃、部分不活跃**：
+
+```
+  source ──┬── branch_A ──(cond: enable_a)──┐
+            │                                 │
+            ├── branch_B ──(cond: enable_b)──┼── merge ──→ output
+            │                                 │
+            └── branch_C ──(cond: enable_c)──┘
+
+  场景: enable_a=true, enable_b=false, enable_c=true
+
+  可达性分析：
+    1. source → 可达 ✅
+    2. source → branch_A (cond=true) → branch_A 可达 ✅
+    3. source → branch_B (cond=false) → branch_B 不可达 ❌
+    4. source → branch_C (cond=true) → branch_C 可达 ✅
+    5. branch_A → merge → merge 可达 ✅
+    6. branch_B → merge (来源不可达，但 merge 已可达)
+    7. branch_C → merge (已可达)
+    8. merge → output → output 可达 ✅
+
+  merge 的状态：
+    - 有效入度 = 2 (from branch_A and branch_C)
+    - branch_B 的入边不活跃，不计入
+    - merge 读取: branch_A_result (实际) + branch_B_result (默认值) + branch_C_result (实际)
+
+  ★ 关键点：
+    - 汇聚节点无需所有入边都活跃，只需至少一条
+    - 不活跃入边对应的 upstream 的 SkipOutput 会填充默认值
+    - merge 节点需要能处理部分真实数据+部分默认值的混合输入
+```
+
 ### 3.4 算法
 
 ```go
@@ -689,9 +908,143 @@ Level 3: [end]
   → 执行 end
 ```
 
----
+### 9.3 多条件边同时不激活
 
-## 10. 文件变更清单
+```
+DAG: classify → {payment, risk_check(cond:needs_risk), intl_verify(cond:is_intl)} → merge → end
+
+state["needs_risk_check"] = false
+state["is_international"] = false
+
+Level 0: [classify]
+  → evaluate:
+    - edge(classify→payment) 无条件 → 活跃
+    - edge(classify→risk_check) cond=false → 不活跃
+    - edge(classify→intl_verify) cond=false → 不活跃
+  → ActiveBlocks = {classify, payment}
+  → 执行 classify
+
+Level 1: [payment, risk_check, intl_verify]
+  → payment 可达 ✅ → 执行
+  → risk_check 不可达 ❌ → 跳过 → state["risk_result"] = SkipOutput
+  → intl_verify 不可达 ❌ → 跳过 → state["intl_result"] = SkipOutput
+  → 只执行 payment
+
+Level 2: [merge]
+  → merge 可达 (via payment) ✅
+  → 执行 merge (读到 payment_result + risk默认值 + intl默认值)
+
+Level 3: [end]
+  → 执行 end
+```
+
+### 9.4 菱形嵌套：分支内部的条件边
+
+```
+DAG:
+  start → {legal, tech_eval} (并行)
+  legal → {doc_review, compliance(cond:is_regulated)} (legal内部菱形)
+  doc_review → legal_merge, compliance → legal_merge
+  legal_merge → final_merge, tech_eval → final_merge
+  final_merge → end
+
+state["is_regulated"] = false
+
+Level 0: [start]
+  → 执行 start
+
+Level 1: [legal, tech_eval]
+  → 两个都可达 → 并行执行
+
+Level 2: [doc_review, compliance]
+  → doc_review 可达 ✅ → 执行
+  → compliance 不可达 ❌ → 跳过 → state["compliance_result"] = SkipOutput
+
+Level 3: [legal_merge]
+  → legal_merge 可达 (via doc_review) ✅
+  → 执行 legal_merge (读到 doc_review_result + compliance默认值)
+
+Level 4: [final_merge]
+  → final_merge 可达 (via legal_merge and tech_eval) ✅
+  → 执行 final_merge
+
+Level 5: [end]
+  → 执行 end
+
+★ 分支 legal 内部的条件边只剪枝了 compliance，不影响 legal 本身的可达性
+```
+
+### 9.5 全分支剪枝导致汇聚点连带剪枝
+
+```
+DAG: gate → {feature_A(cond:enable_a), feature_B(cond:enable_b), feature_C(cond:enable_c)}
+     feature_A → aggregate, feature_B → aggregate, feature_C → aggregate
+     aggregate → output
+
+state: enable_a=false, enable_b=false, enable_c=false
+
+Level 0: [gate]
+  → evaluate: 三条条件边都不活跃
+  → ActiveBlocks = {gate}
+  → 执行 gate
+
+Level 1: [feature_A, feature_B, feature_C]
+  → 三个都不可达 ❌ → 全部跳过
+  → state["feature_a_result"] = SkipOutput_A
+  → state["feature_b_result"] = SkipOutput_B
+  → state["feature_c_result"] = SkipOutput_C
+
+Level 2: [aggregate]
+  → aggregate 的所有入边都不活跃 → 不可达 ❌ → 跳过
+  → state["aggregate_result"] = SkipOutput_aggregate
+
+Level 3: [output]
+  → output 的唯一入边(aggregate→output)来源不可达 → 不可达 ❌ → 跳过
+  → state["output_result"] = SkipOutput_output
+
+★ 关键点：当所有分支都被剪枝，汇聚点及更下游全部连带剪枝
+★ 这确保了不会出现"汇聚点等待永远不会到来的上游"的死等问题
+```
+
+### 9.6 剪枝级联扇出（条件节点的整棵子树被剪枝）
+
+```
+DAG:
+  entry → pre_check → {deep_scan(cond:needs_deep), quick_scan}
+  deep_scan → {vuln_analysis, license_check}
+  vuln_analysis → vul_merge, license_check → vul_merge
+  quick_scan → enrich
+  enrich → report, vul_merge → report
+
+state["needs_deep"] = false
+
+Level 0: [entry]
+  → 执行 entry
+
+Level 1: [pre_check]
+  → 执行 pre_check
+
+Level 2: [deep_scan, quick_scan]
+  → deep_scan 不可达 ❌ → 跳过 → state["deep_scan_result"] = SkipOutput
+  → quick_scan 可达 ✅ → 执行
+
+Level 3: [vuln_analysis, license_check]
+  → 两者唯一入边都来自 deep_scan (不可达)
+  → 都不可达 ❌ → 跳过
+  → state["vuln_result"] = SkipOutput
+  → state["license_result"] = SkipOutput
+
+Level 4: [vul_merge, enrich]
+  → vul_merge: 两条入边都不活跃 → 不可达 ❌ → 跳过 → state["vul_merge_result"] = SkipOutput
+  → enrich: 来自 quick_scan (可达) → 可达 ✅ → 执行
+
+Level 5: [report]
+  → report: 来自 enrich (活跃) 和 vul_merge (不活跃)，至少一条活跃 → 可达 ✅
+  → 执行 report (读到 enrich_result + vul_merge默认值)
+
+★ 关键点：deep_scan 被剪枝后，其整棵子树 (vuln_analysis, license_check, vul_merge) 全部级联剪枝
+★ report 因有来自 enrich 的另一条活跃路径而仍然可达
+```
 
 | 文件 | 变更 | 说明 |
 |------|------|------|
