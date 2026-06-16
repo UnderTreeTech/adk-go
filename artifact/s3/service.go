@@ -1,8 +1,7 @@
 // Package s3artifact provides an Amazon S3 [artifact.Service].
 //
 // This package allows storing and retrieving artifacts in an S3 bucket.
-// Artifacts are organized by application name, user ID, session ID, and filename,
-// with support for versioning.
+// Artifacts are organized by application name, user ID, session ID, and filename.
 package s3artifact
 
 import (
@@ -14,7 +13,6 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	at "github.com/UnderTreeTech/adk-go/artifact"
@@ -71,18 +69,11 @@ func fileHasUserNamespace(filename string) bool {
 }
 
 // buildBlobName constructs the object key in S3.
-func buildBlobName(appName, userID, sessionID, fileName string, version int64) string {
+func buildBlobName(appName, userID, sessionID, fileName string) string {
 	if fileHasUserNamespace(fileName) {
-		return fmt.Sprintf("%s/%s/user/%s/%d", appName, userID, fileName, version)
+		return fmt.Sprintf("%s/%s/user/%s", appName, userID, fileName)
 	}
-	return fmt.Sprintf("%s/%s/%s/%s/%d", appName, userID, sessionID, fileName, version)
-}
-
-func buildBlobNamePrefix(appName, userID, sessionID, fileName string) string {
-	if fileHasUserNamespace(fileName) {
-		return fmt.Sprintf("%s/%s/user/%s/", appName, userID, fileName)
-	}
-	return fmt.Sprintf("%s/%s/%s/%s/", appName, userID, sessionID, fileName)
+	return fmt.Sprintf("%s/%s/%s/%s", appName, userID, sessionID, fileName)
 }
 
 func buildSessionPrefix(appName, userID, sessionID string) string {
@@ -102,20 +93,7 @@ func (s *s3Service) Save(ctx context.Context, req *artifact.SaveRequest) (*artif
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	newArtifact := req.Part
 
-	nextVersion := int64(1)
-
-	// Determine next version
-	response, err := s.versions(ctx, &artifact.VersionsRequest{
-		AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list artifact versions: %w", err)
-	}
-	if len(response.Versions) > 0 {
-		nextVersion = slices.Max(response.Versions) + 1
-	}
-
-	blobName := buildBlobName(appName, userID, sessionID, fileName, nextVersion)
+	blobName := buildBlobName(appName, userID, sessionID, fileName)
 
 	var body io.Reader
 	var contentType string
@@ -138,7 +116,7 @@ func (s *s3Service) Save(ctx context.Context, req *artifact.SaveRequest) (*artif
 		return nil, fmt.Errorf("failed to write blob to S3: %w", err)
 	}
 
-	return &artifact.SaveResponse{Version: nextVersion}, nil
+	return &artifact.SaveResponse{Version: 0}, nil
 }
 
 // Delete implements [artifact.Service]
@@ -148,55 +126,14 @@ func (s *s3Service) Delete(ctx context.Context, req *artifact.DeleteRequest) err
 		return fmt.Errorf("request validation failed: %w", err)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
-	version := req.Version
 
-	// Delete specific version
-	if version != 0 {
-		blobName := buildBlobName(appName, userID, sessionID, fileName, version)
-		_, err := s.client.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
-			Bucket: aws.String(s.bucketName),
-			Key:    aws.String(blobName),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to delete artifact: %w", err)
-		}
-		return nil
-	}
-
-	// Delete all versions
-	// First fetch all versions to get their keys
-	response, err := s.versions(ctx, &artifact.VersionsRequest{
-		AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to fetch versions on delete artifact: %w", err)
-	}
-
-	if len(response.Versions) == 0 {
-		return nil
-	}
-
-	// Batch delete objects
-	// S3 DeleteObjects can handle up to 1000 objects per request.
-	// For simplicity, we assume the versions list doesn't exceed this for a single artifact,
-	// or we could batch it if needed.
-	objects := make([]*s3.ObjectIdentifier, 0, len(response.Versions))
-	for _, v := range response.Versions {
-		key := buildBlobName(appName, userID, sessionID, fileName, v)
-		objects = append(objects, &s3.ObjectIdentifier{Key: aws.String(key)})
-	}
-
-	// If there are many versions, we might need to paginate the delete,
-	// but keeping it simple as per the gcs implementation scope.
-	_, err = s.client.DeleteObjectsWithContext(ctx, &s3.DeleteObjectsInput{
+	blobName := buildBlobName(appName, userID, sessionID, fileName)
+	_, err = s.client.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucketName),
-		Delete: &s3.Delete{
-			Objects: objects,
-			Quiet:   aws.Bool(true),
-		},
+		Key:    aws.String(blobName),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to delete artifact versions: %w", err)
+		return fmt.Errorf("failed to delete artifact: %w", err)
 	}
 
 	return nil
@@ -209,22 +146,8 @@ func (s *s3Service) Load(ctx context.Context, req *artifact.LoadRequest) (*artif
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
-	version := req.Version
 
-	if version == 0 {
-		response, err := s.versions(ctx, &artifact.VersionsRequest{
-			AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list artifact versions: %w", err)
-		}
-		if len(response.Versions) == 0 {
-			return nil, fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
-		}
-		version = slices.Max(response.Versions)
-	}
-
-	blobName := buildBlobName(appName, userID, sessionID, fileName, version)
+	blobName := buildBlobName(appName, userID, sessionID, fileName)
 
 	resp, err := s.client.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucketName),
@@ -272,13 +195,13 @@ func (s *s3Service) fetchFilenamesFromPrefix(ctx context.Context, prefix string,
 			}
 			key := *obj.Key
 			segments := strings.Split(key, "/")
-			if len(segments) < 2 {
+			if len(segments) < 1 {
 				// Should not happen given our naming structure
 				continue
 			}
-			// key format: appName/userId/sessionId/filename/version
-			// filename is the second to last segment
-			filename := segments[len(segments)-2]
+			// key format: appName/userId/sessionId/filename
+			// filename is the last segment
+			filename := segments[len(segments)-1]
 			filenamesSet[filename] = true
 		}
 		return true // continue paging
@@ -325,42 +248,23 @@ func (s *s3Service) versions(ctx context.Context, req *artifact.VersionsRequest)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 
-	prefix := buildBlobNamePrefix(appName, userID, sessionID, fileName)
+	blobName := buildBlobName(appName, userID, sessionID, fileName)
 
-	versions := make([]int64, 0)
-
-	input := &s3.ListObjectsV2Input{
+	// Check if the object exists by doing a HeadObject
+	_, err = s.client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucketName),
-		Prefix: aws.String(prefix),
-	}
-
-	err = s.client.ListObjectsV2PagesWithContext(ctx, input, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
-		for _, obj := range page.Contents {
-			if obj.Key == nil {
-				continue
-			}
-			key := *obj.Key
-			segments := strings.Split(key, "/")
-			if len(segments) < 1 {
-				continue
-			}
-			// Last segment is the version number
-			versionStr := segments[len(segments)-1]
-			version, err := strconv.ParseInt(versionStr, 10, 64)
-			// if the file version is not convertible to number, just ignore it
-			if err != nil {
-				continue
-			}
-			versions = append(versions, version)
-		}
-		return true
+		Key:    aws.String(blobName),
 	})
-
 	if err != nil {
-		return nil, fmt.Errorf("error iterating blobs: %w", err)
+		if aerr, ok := err.(awserr.Error); ok {
+			if aerr.Code() == "NotFound" || aerr.Code() == s3.ErrCodeNoSuchKey {
+				return &artifact.VersionsResponse{Versions: []int64{}}, nil
+			}
+		}
+		return nil, fmt.Errorf("failed to check artifact existence: %w", err)
 	}
 
-	return &artifact.VersionsResponse{Versions: versions}, nil
+	return &artifact.VersionsResponse{Versions: []int64{0}}, nil
 }
 
 // Versions implements [artifact.Service] and returns an error if no versions are found.
@@ -382,23 +286,8 @@ func (s *s3Service) GetArtifactVersion(ctx context.Context, req *artifact.GetArt
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
-	version := req.Version
 
-	// If version is 0, resolve to the latest version
-	if version == 0 {
-		response, err := s.versions(ctx, &artifact.VersionsRequest{
-			AppName: appName, UserID: userID, SessionID: sessionID, FileName: fileName,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list artifact versions: %w", err)
-		}
-		if len(response.Versions) == 0 {
-			return nil, fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
-		}
-		version = slices.Max(response.Versions)
-	}
-
-	blobName := buildBlobName(appName, userID, sessionID, fileName, version)
+	blobName := buildBlobName(appName, userID, sessionID, fileName)
 
 	resp, err := s.client.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucketName),
@@ -449,7 +338,7 @@ func (s *s3Service) GetArtifactVersion(ctx context.Context, req *artifact.GetArt
 
 	return &artifact.GetArtifactVersionResponse{
 		ArtifactVersion: &artifact.ArtifactVersion{
-			Version:        version,
+			Version:        0,
 			CanonicalURI:   canonicalURI,
 			CustomMetadata: customMeta,
 			CreateTime:     createTime,

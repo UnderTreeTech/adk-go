@@ -2,14 +2,15 @@ package filegentool
 
 import (
 	"fmt"
+	"path/filepath"
 
-	toolutils "github.com/UnderTreeTech/adk-go/tools"
+	"github.com/google/uuid"
 
 	at "github.com/UnderTreeTech/adk-go/artifact"
 
-	"github.com/UnderTreeTech/waterdrop/pkg/log"
+	toolutils "github.com/UnderTreeTech/adk-go/tools"
+
 	"google.golang.org/adk/artifact"
-	"google.golang.org/adk/session"
 	"google.golang.org/adk/tool"
 	"google.golang.org/adk/tool/functiontool"
 	"google.golang.org/genai"
@@ -35,14 +36,17 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		}
 
 		mimeType := toolutils.GetMimeType(args.FileName)
-		// Construct the SaveRequest.
-		// We rely on ctx providing the necessary session information.
-		// Note: The ADK tool.Context interface allows accessing session information.
+		fileExt := filepath.Ext(args.FileName)
+
+		// 生成唯一文件ID，避免同名文件互相覆盖
+		fileID := uuid.New().String()
+		storedFileName := fileID + fileExt
+
 		req := &artifact.SaveRequest{
 			AppName:   ctx.AppName(),
 			UserID:    ctx.UserID(),
 			SessionID: ctx.SessionID(),
-			FileName:  args.FileName,
+			FileName:  storedFileName,
 			Part: &genai.Part{
 				Text: args.Content,
 				InlineData: &genai.Blob{
@@ -52,56 +56,25 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 			},
 		}
 
-		resp, err := svc.Save(ctx, req)
+		_, err := svc.Save(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to save file: %w", err)
 		}
 
 		// 生成文件URL
-		fileURL := toolutils.GenerateFileURL(cfg, ctx.AppName(), ctx.UserID(), ctx.SessionID(), args.FileName, resp.Version)
+		fileURL := toolutils.GenerateFileURL(cfg, ctx.AppName(), ctx.UserID(), ctx.SessionID(), storedFileName)
 
 		// 获取文件大小和格式
 		fileSize := len([]byte(args.Content))
 		fileFormat := toolutils.GetFileFormat(args.FileName)
 
-		// 构建文件信息
-		fileInfo := map[string]any{
-			"filename": args.FileName,
-			"format":   fileFormat,
-			//"content":      args.Content,
-			"size":         fileSize,
-			"download_url": fileURL,
-		}
-
-		// 将文件信息写入 session.State 的 artifacts 字段
-		// 使用 temp: 前缀，因为这是单次 invocation 的临时状态
-		artifactsKey := session.KeyPrefixTemp + "artifacts"
-		var artifacts []map[string]any
-
-		// 尝试读取现有的 artifacts
-		if val, err := ctx.State().Get(artifactsKey); err == nil && val != nil {
-			if existingArtifacts, ok := val.([]map[string]any); ok {
-				artifacts = existingArtifacts
-			}
-		}
-
-		// 追加新文件信息
-		artifacts = append(artifacts, fileInfo)
-
-		// 更新 session.State
-		if err := ctx.State().Set(artifactsKey, artifacts); err != nil {
-			// 记录错误但不影响工具执行
-			log.Error(ctx, "failed to add temp file into to state", log.String("error", err.Error()))
-		}
-
 		return map[string]any{
 			"status":   "success",
 			"filename": args.FileName,
-			"version":  resp.Version,
+			"file_id":  fileID,
 			"url":      fileURL,
 			"size":     fileSize,
 			"format":   fileFormat,
-			//"content":  args.Content,
 		}, nil
 	})
 }

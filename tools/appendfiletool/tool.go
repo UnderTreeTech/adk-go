@@ -3,7 +3,10 @@ package appendfiletool
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/google/uuid"
 
 	at "github.com/UnderTreeTech/adk-go/artifact"
 
@@ -29,8 +32,8 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 	return functiontool.New(functiontool.Config{
 		Name: "generate_file",
 		Description: `Create/append content to a file.
-					small file(<4000 tokens): set 'is_last'=true.
-					large file(>4000 tokens): multiple calls, 'is_last'=true only for the last chunk.`,
+						small file(<=4000 tokens): set 'is_last'=true.
+						large file(>4000 tokens): multiple calls, 'is_last'=true only for the last chunk.`,
 	}, func(ctx tool.Context, args Args) (map[string]any, error) {
 		if args.FileName == "" {
 			return nil, fmt.Errorf("filename is required")
@@ -45,11 +48,13 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 			log.Int("content_length", len(args.Content)))
 
 		mimeType := toolutils.GetMimeType(args.FileName)
+		fileExt := filepath.Ext(args.FileName)
 
 		// 从 session.State 中获取文件的临时路径和累计大小
 		tempKey := session.KeyPrefixTemp + "file_" + args.FileName
 		var tempFilePath string
 		var currentSize int
+		var fileID string
 
 		// 尝试获取现有的临时文件路径
 		if val, err := ctx.State().Get(tempKey); err == nil && val != nil {
@@ -60,6 +65,9 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 				if size, ok := info["size"].(int); ok {
 					currentSize = size
 				}
+				if id, ok := info["file_id"].(string); ok {
+					fileID = id
+				}
 			}
 		}
 
@@ -69,13 +77,17 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 				log.String("filename", args.FileName),
 				log.Int("file_size", len(args.Content)))
 
+			// 生成唯一文件ID，避免同名文件互相覆盖
+			fileID = uuid.New().String()
+			storedFileName := fileID + fileExt
+
 			// 直接保存到 artifact service，不创建临时文件
 			contentBytes := []byte(args.Content)
 			req := &artifact.SaveRequest{
 				AppName:   ctx.AppName(),
 				UserID:    ctx.UserID(),
 				SessionID: ctx.SessionID(),
-				FileName:  args.FileName,
+				FileName:  storedFileName,
 				Part: &genai.Part{
 					Text: args.Content,
 					InlineData: &genai.Blob{
@@ -85,47 +97,26 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 				},
 			}
 
-			resp, err := svc.Save(ctx, req)
-			if err != nil {
+			if _, err := svc.Save(ctx, req); err != nil {
 				return nil, fmt.Errorf("failed to save file: %w", err)
 			}
 
 			// 生成文件URL
-			fileURL := toolutils.GenerateFileURL(cfg, ctx.AppName(), ctx.UserID(), ctx.SessionID(), args.FileName, resp.Version)
+			fileURL := toolutils.GenerateFileURL(cfg, ctx.AppName(), ctx.UserID(), ctx.SessionID(), storedFileName)
 			fileFormat := toolutils.GetFileFormat(args.FileName)
 			fileSize := len(contentBytes)
 
-			// 将文件信息写入 session.State 的 artifacts 字段
-			artifactsKey := session.KeyPrefixTemp + "artifacts"
-			var artifacts []map[string]any
-
-			if val, err := ctx.State().Get(artifactsKey); err == nil && val != nil {
-				if existingArtifacts, ok := val.([]map[string]any); ok {
-					artifacts = existingArtifacts
-				}
-			}
-
-			fileInfo := map[string]any{
-				"filename":     args.FileName,
-				"format":       fileFormat,
-				"size":         fileSize,
-				"download_url": fileURL,
-			}
-			artifacts = append(artifacts, fileInfo)
-
-			if err := ctx.State().Set(artifactsKey, artifacts); err != nil {
-				log.Error(ctx, "failed to add file info to state", log.String("error", err.Error()))
-			}
-
 			log.Debug(ctx, "small file generation completed",
 				log.String("filename", args.FileName),
+				log.String("file_id", fileID),
 				log.String("url", fileURL),
 				log.Int("size", fileSize))
 
 			return map[string]any{
 				"status":   "completed",
 				"filename": args.FileName,
-				"version":  resp.Version,
+				"file_id":  fileID,
+				"version":  int64(0),
 				"url":      fileURL,
 				"size":     fileSize,
 				"format":   fileFormat,
@@ -136,6 +127,9 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		// 大文件分块生成逻辑（需要临时文件）
 		// 如果没有临时文件，创建一个
 		if tempFilePath == "" {
+			// 生成唯一文件ID
+			fileID = uuid.New().String()
+
 			// 构建唯一的临时文件名，包含 appName(哈希脱敏), userID, sessionID 和 filename
 			// 使用下划线替换文件名中的特殊字符，避免路径问题
 			safeFileName := strings.ReplaceAll(args.FileName, "/", "_")
@@ -155,6 +149,7 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 
 			log.Debug(ctx, "creating new temp file for large file generation",
 				log.String("filename", args.FileName),
+				log.String("file_id", fileID),
 				log.String("temp_path", tempFilePath),
 				log.String("appName", at.HashAppName(ctx.AppName())),
 				log.String("userID", ctx.UserID()),
@@ -162,6 +157,7 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		} else {
 			log.Debug(ctx, "using existing temp file for large file generation",
 				log.String("filename", args.FileName),
+				log.String("file_id", fileID),
 				log.String("temp_path", tempFilePath),
 				log.Int("current_size", currentSize))
 		}
@@ -190,6 +186,7 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		if err := ctx.State().Set(tempKey, map[string]any{
 			"temp_path": tempFilePath,
 			"size":      currentSize,
+			"file_id":   fileID,
 		}); err != nil {
 			log.Error(ctx, "failed to update temp file info in state", log.String("error", err.Error()))
 		}
@@ -198,7 +195,11 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		if args.IsLast {
 			log.Debug(ctx, "finalizing large file from temp file",
 				log.String("filename", args.FileName),
+				log.String("file_id", fileID),
 				log.Int("total_size", currentSize))
+
+			// 先关闭写句柄，确保数据刷盘，再读取完整内容
+			file.Close()
 
 			// 读取完整的文件内容
 			fileData, err := os.ReadFile(tempFilePath)
@@ -206,12 +207,15 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 				return nil, fmt.Errorf("failed to read temp file: %w", err)
 			}
 
+			// 使用UUID+扩展名作为存储文件名，避免同名文件互相覆盖
+			storedFileName := fileID + fileExt
+
 			// 保存到 artifact service
 			req := &artifact.SaveRequest{
 				AppName:   ctx.AppName(),
 				UserID:    ctx.UserID(),
 				SessionID: ctx.SessionID(),
-				FileName:  args.FileName,
+				FileName:  storedFileName,
 				Part: &genai.Part{
 					Text: string(fileData),
 					InlineData: &genai.Blob{
@@ -221,36 +225,13 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 				},
 			}
 
-			resp, err := svc.Save(ctx, req)
-			if err != nil {
+			if _, err = svc.Save(ctx, req); err != nil {
 				return nil, fmt.Errorf("failed to save file: %w", err)
 			}
 
 			// 生成文件URL
-			fileURL := toolutils.GenerateFileURL(cfg, ctx.AppName(), ctx.UserID(), ctx.SessionID(), args.FileName, resp.Version)
+			fileURL := toolutils.GenerateFileURL(cfg, ctx.AppName(), ctx.UserID(), ctx.SessionID(), storedFileName)
 			fileFormat := toolutils.GetFileFormat(args.FileName)
-
-			// 将文件信息写入 session.State 的 artifacts 字段
-			artifactsKey := session.KeyPrefixTemp + "artifacts"
-			var artifacts []map[string]any
-
-			if val, err := ctx.State().Get(artifactsKey); err == nil && val != nil {
-				if existingArtifacts, ok := val.([]map[string]any); ok {
-					artifacts = existingArtifacts
-				}
-			}
-
-			fileInfo := map[string]any{
-				"filename":     args.FileName,
-				"format":       fileFormat,
-				"size":         currentSize,
-				"download_url": fileURL,
-			}
-			artifacts = append(artifacts, fileInfo)
-
-			if err := ctx.State().Set(artifactsKey, artifacts); err != nil {
-				log.Error(ctx, "failed to add file info to state", log.String("error", err.Error()))
-			}
 
 			// 清理临时文件和状态
 			os.Remove(tempFilePath)
@@ -259,13 +240,15 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 
 			log.Debug(ctx, "large file generation completed",
 				log.String("filename", args.FileName),
+				log.String("file_id", fileID),
 				log.String("url", fileURL),
 				log.Int("total_size", currentSize))
 
 			return map[string]any{
 				"status":   "completed",
 				"filename": args.FileName,
-				"version":  resp.Version,
+				"file_id":  fileID,
+				"version":  int64(0),
 				"url":      fileURL,
 				"size":     currentSize,
 				"format":   fileFormat,
@@ -282,6 +265,7 @@ func New(svc artifact.Service, cfg *at.Config) (tool.Tool, error) {
 		return map[string]any{
 			"status":     "appending",
 			"filename":   args.FileName,
+			"file_id":    fileID,
 			"chunk_size": n,
 			"total_size": currentSize,
 			"message":    fmt.Sprintf("Successfully appended %d bytes. Total size: %d bytes. Continue appending or set 'is_last' to true to finalize.", n, currentSize),

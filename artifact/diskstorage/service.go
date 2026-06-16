@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	at "github.com/UnderTreeTech/adk-go/artifact"
@@ -46,15 +45,7 @@ func fileHasUserNamespace(filename string) bool {
 }
 
 // buildPath constructs the file path on disk.
-func (s *diskService) buildPath(appName, userID, sessionID, fileName string, version int64) string {
-	if fileHasUserNamespace(fileName) {
-		return filepath.Join(s.baseDir, appName, userID, "user", fileName, strconv.FormatInt(version, 10))
-	}
-	return filepath.Join(s.baseDir, appName, userID, sessionID, fileName, strconv.FormatInt(version, 10))
-}
-
-// buildFileDir constructs the directory path for a specific file (containing its versions).
-func (s *diskService) buildFileDir(appName, userID, sessionID, fileName string) string {
+func (s *diskService) buildPath(appName, userID, sessionID, fileName string) string {
 	if fileHasUserNamespace(fileName) {
 		return filepath.Join(s.baseDir, appName, userID, "user", fileName)
 	}
@@ -79,21 +70,7 @@ func (s *diskService) Save(ctx context.Context, req *artifact.SaveRequest) (*art
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 	newArtifact := req.Part
 
-	nextVersion := int64(1)
-
-	// Determine next version
-	response, err := s.Versions(ctx, &artifact.VersionsRequest{
-		AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
-	})
-	if err == nil && len(response.Versions) > 0 {
-		nextVersion = slices.Max(response.Versions) + 1
-	} else if err != nil && !os.IsNotExist(err) && !strings.Contains(err.Error(), "artifact not found") {
-		// Ignore "not found" errors as it means we are creating the first version
-		// But report real IO errors
-		return nil, fmt.Errorf("failed to list artifact versions: %w", err)
-	}
-
-	filePath := s.buildPath(appName, userID, sessionID, fileName, nextVersion)
+	filePath := s.buildPath(appName, userID, sessionID, fileName)
 	dirPath := filepath.Dir(filePath)
 
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
@@ -111,7 +88,7 @@ func (s *diskService) Save(ctx context.Context, req *artifact.SaveRequest) (*art
 		return nil, fmt.Errorf("failed to write file to disk: %w", err)
 	}
 
-	return &artifact.SaveResponse{Version: nextVersion}, nil
+	return &artifact.SaveResponse{Version: 0}, nil
 }
 
 // Delete implements [artifact.Service]
@@ -120,24 +97,13 @@ func (s *diskService) Delete(ctx context.Context, req *artifact.DeleteRequest) e
 		return fmt.Errorf("request validation failed: %w", err)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
-	version := req.Version
 
-	if version != 0 {
-		// Delete specific version
-		filePath := s.buildPath(appName, userID, sessionID, fileName, version)
-		if err := os.Remove(filePath); err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return fmt.Errorf("failed to delete artifact version: %w", err)
+	filePath := s.buildPath(appName, userID, sessionID, fileName)
+	if err := os.Remove(filePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
-		return nil
-	}
-
-	// Delete all versions (remove the file directory)
-	dirPath := s.buildFileDir(appName, userID, sessionID, fileName)
-	if err := os.RemoveAll(dirPath); err != nil {
-		return fmt.Errorf("failed to delete artifact directory: %w", err)
+		return fmt.Errorf("failed to delete artifact: %w", err)
 	}
 
 	return nil
@@ -149,19 +115,8 @@ func (s *diskService) Load(ctx context.Context, req *artifact.LoadRequest) (*art
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
-	version := req.Version
 
-	if version == 0 {
-		response, err := s.Versions(ctx, &artifact.VersionsRequest{
-			AppName: appName, UserID: req.UserID, SessionID: req.SessionID, FileName: req.FileName,
-		})
-		if err != nil {
-			return nil, err // Versions already returns appropriate error for not found
-		}
-		version = slices.Max(response.Versions)
-	}
-
-	filePath := s.buildPath(appName, userID, sessionID, fileName, version)
+	filePath := s.buildPath(appName, userID, sessionID, fileName)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -191,7 +146,7 @@ func (s *diskService) fetchFilenamesFromDir(dirPath string, filenamesSet map[str
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if !entry.IsDir() {
 			filenamesSet[entry.Name()] = true
 		}
 	}
@@ -230,32 +185,16 @@ func (s *diskService) Versions(ctx context.Context, req *artifact.VersionsReques
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
 
-	dirPath := s.buildFileDir(appName, userID, sessionID, fileName)
-	entries, err := os.ReadDir(dirPath)
+	filePath := s.buildPath(appName, userID, sessionID, fileName)
+	_, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
 		}
-		return nil, fmt.Errorf("failed to list artifact versions: %w", err)
+		return nil, fmt.Errorf("failed to check artifact existence: %w", err)
 	}
 
-	var versions []int64
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		v, err := strconv.ParseInt(entry.Name(), 10, 64)
-		if err == nil {
-			versions = append(versions, v)
-		}
-	}
-
-	if len(versions) == 0 {
-		return nil, fmt.Errorf("artifact not found: %w", fs.ErrNotExist)
-	}
-
-	sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
-	return &artifact.VersionsResponse{Versions: versions}, nil
+	return &artifact.VersionsResponse{Versions: []int64{0}}, nil
 }
 
 // GetArtifactVersion implements [artifact.Service] and returns the metadata for a specific version.
@@ -264,20 +203,8 @@ func (s *diskService) GetArtifactVersion(ctx context.Context, req *artifact.GetA
 		return nil, fmt.Errorf("request validation failed: %w", err)
 	}
 	appName, userID, sessionID, fileName := at.HashAppName(req.AppName), req.UserID, req.SessionID, req.FileName
-	version := req.Version
 
-	// If version is 0, resolve to the latest version
-	if version == 0 {
-		response, err := s.Versions(ctx, &artifact.VersionsRequest{
-			AppName: appName, UserID: userID, SessionID: sessionID, FileName: fileName,
-		})
-		if err != nil {
-			return nil, err
-		}
-		version = slices.Max(response.Versions)
-	}
-
-	filePath := s.buildPath(appName, userID, sessionID, fileName, version)
+	filePath := s.buildPath(appName, userID, sessionID, fileName)
 
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -303,7 +230,7 @@ func (s *diskService) GetArtifactVersion(ctx context.Context, req *artifact.GetA
 
 	return &artifact.GetArtifactVersionResponse{
 		ArtifactVersion: &artifact.ArtifactVersion{
-			Version:      version,
+			Version:      0,
 			CanonicalURI: canonicalURI,
 			CreateTime:   float64(info.ModTime().Unix()),
 			MimeType:     mimeType,
