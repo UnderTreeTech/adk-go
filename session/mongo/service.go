@@ -552,6 +552,8 @@ type chatSession struct {
 	UserID     string         `bson:"user_id"`
 	State      map[string]any `bson:"state"`
 	Deleted    int32          `bson:"deleted"`
+	Title      string         `bson:"title"`
+	Summarized int32          `bson:"summarized"` // 是否已完成标题总结：0=未完成 1=已完成
 	CreateTime int64          `bson:"create_time"`
 	UpdateTime int64          `bson:"update_time"`
 }
