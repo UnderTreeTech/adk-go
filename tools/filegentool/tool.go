@@ -16,17 +16,18 @@ import (
 )
 
 // Args defines the arguments for the file generation tool.
-// When the filename ends with .pdf or .html, the Content field is treated as
-// Markdown and rendered to the target format before saving. For other formats
-// (e.g. .md, .txt, .py) the content is saved as-is.
+// Only .pdf, .html/.htm, and .md formats are supported.
+// For HTML and PDF, the Content field is treated as Markdown and rendered
+// to the target format before saving. For .md the content is saved as-is
+// (with code-block markers cleaned).
 type Args struct {
-	FileName string `json:"filename" description:"The name of the file to create, e.g. 'report.pdf', 'report.html', 'report.md'."`
-	Content  string `json:"content" description:"Markdown-formatted content for PDF/HTML output, or raw text for other file types."`
+	FileName string `json:"filename" description:"The name of the file to create. Only .pdf, .html, and .md formats are supported, e.g. 'report.pdf', 'report.html', 'report.md'."`
+	Content  string `json:"content" description:"Markdown-formatted content. For PDF/HTML it will be rendered from Markdown; for .md it is saved as-is."`
 }
 
-// New creates a new file generation tool instance that supports multiple output
-// formats: Markdown (saved as-is), HTML (rendered from Markdown), and PDF
-// (rendered from Markdown with CJK support).
+// New creates a new file generation tool instance that supports three output
+// formats only: Markdown (saved as-is), HTML (rendered from Markdown), and PDF
+// (rendered from Markdown with CJK support). Other formats are rejected.
 //
 // Parameters:
 //   - svc: artifact service for persisting generated files
@@ -43,7 +44,7 @@ func New(svc artifact.Service, cfg *at.Config, fc *FontConfig) (tool.Tool, error
 
 	return functiontool.New(functiontool.Config{
 		Name:        "generate_file",
-		Description: "Generates a file with the specified content and saves it to the storage server. Supports Markdown (.md), HTML (.html), and PDF (.pdf) generation. For HTML and PDF, provide Markdown-formatted content and it will be automatically rendered to the target format. For other file types (code, text, etc.), the content is saved as-is. Use this tool when the user explicitly asks to generate a file or when the output is best represented as a formatted document.",
+		Description: "Generates a document file and saves it to the storage server. ONLY supports three formats: Markdown (.md), HTML (.html/.htm), and PDF (.pdf). For HTML and PDF, provide Markdown-formatted content and it will be automatically rendered to the target format. For Markdown, content is saved as-is. Do NOT use this tool for other file types (e.g. .docx, .xlsx, .pptx, .csv, .json, .xml, code files, etc.) — those formats are not supported and will fail. Use this tool only when the user explicitly asks to generate a document in .md, .html, or .pdf format.",
 	}, func(ctx tool.Context, args Args) (map[string]any, error) {
 		if args.FileName == "" {
 			return nil, fmt.Errorf("filename is required")
@@ -88,9 +89,8 @@ func New(svc artifact.Service, cfg *at.Config, fc *FontConfig) (tool.Tool, error
 			mimeType = "text/markdown"
 
 		default:
-			// Save as-is for other formats
-			data = []byte(args.Content)
-			mimeType = toolutils.GetMimeType(args.FileName)
+			// Reject unsupported formats — only .pdf, .html, .md are supported
+			return nil, fmt.Errorf("unsupported file format %q: only .pdf, .html, and .md are supported", fileExt)
 		}
 
 		// Generate unique file ID to avoid overwriting existing files
