@@ -155,6 +155,8 @@ func (m *mongoSessionService) Get(ctx context.Context, req *session.GetRequest) 
 		opFilter["_limit"] = int64(req.NumRecentEvents)
 	} else if m.NumRecentEvents > 0 {
 		opFilter["_limit"] = int64(m.NumRecentEvents)
+	} else if m.NumRecentEvents < 0 { // 不取历史上下文
+		return &session.GetResponse{Session: ms}, nil
 	}
 	var startTime int64
 	if !req.After.IsZero() {
