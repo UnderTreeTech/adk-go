@@ -1299,3 +1299,66 @@ func TestCrossFormatCJK(t *testing.T) {
 	mdData := []byte(md)
 	assertMD(t, "cross_cjk_md", mdData)
 }
+
+func TestLooksLikeHTMLDocument(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "plain markdown",
+			content: "# Hello\n\nSome **bold** text and a [link](https://example.com).",
+			want:    false,
+		},
+		{
+			name:    "markdown with inline html tag",
+			content: "# Title\n\nUse `<div>` for layout.",
+			want:    false,
+		},
+		{
+			name:    "literal html document",
+			content: "<!DOCTYPE html>\n<html><head><style>body{}</style></head><body><h1>Hi</h1></body></html>",
+			want:    true,
+		},
+		{
+			name:    "html with only body tag",
+			content: "<body>\n<h1>Title</h1>\n</body>",
+			want:    true,
+		},
+		{
+			name:    "escaped unicode \\u003chtml",
+			content: "\\u003c!DOCTYPE html\\u003e\n\\u003chtml\\u003e\\u003chead\\u003e\\u003cstyle\\u003ebody{}\\u003c/style\\u003e\\u003c/head\\u003e\\u003cbody\\u003e\\u003ch1\\u003eHi\\u003c/h1\\u003e\\u003c/body\\u003e\\u003c/html\\u003e",
+			want:    true,
+		},
+		{
+			name:    "escaped unicode \\u003cstyle only",
+			content: "\\u003cstyle\\u003e* { margin: 0; }\\u003c/style\\u003e\n# Title",
+			want:    true,
+		},
+		{
+			name:    "escaped unicode \\u003cscript",
+			content: "\\u003cscript\\u003ealert(1)\\u003c/script\\u003e",
+			want:    true,
+		},
+		{
+			name:    "uppercase HTML tags",
+			content: "<HTML><HEAD></HEAD><BODY></BODY></HTML>",
+			want:    true,
+		},
+		{
+			name:    "mixed case escaped",
+			content: `<HTML><BODY>Hello</BODY></HTML>`,
+			want:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := looksLikeHTMLDocument(tt.content)
+			if got != tt.want {
+				t.Errorf("looksLikeHTMLDocument(%q) = %v, want %v", tt.content[:min(len(tt.content), 60)], got, tt.want)
+			}
+		})
+	}
+}
