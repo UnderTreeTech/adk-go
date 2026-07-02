@@ -11,14 +11,15 @@ import (
 // CleanMarkdownCodeBlock 清理markdown代码块标记
 // 移除开头的 ```markdown 或 ``` 以及结尾的 ```
 // 参数:
-//   - filename: 文件名，用于判断是否为markdown文件
+//   - filename: 文件名，用于判断是否为markdown或html文件
 //   - content: 原始内容
 //
 // 返回:
 //   - 清理后的内容
 func CleanMarkdownCodeBlock(filename, content string) string {
-	// 只处理markdown文件
-	if !strings.HasSuffix(filename, ".md") {
+	// 只处理markdown和html文件
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext != ".md" && ext != ".html" && ext != ".htm" {
 		return content
 	}
 
