@@ -21,8 +21,8 @@ import (
 // to the target format before saving. For .md the content is saved as-is
 // (with code-block markers cleaned).
 type Args struct {
-	FileName string `json:"filename" description:"The name of the file to create. Only .pdf, .html, and .md formats are supported, e.g. 'report.pdf', 'report.html', 'report.md'."`
-	Content  string `json:"content" description:"The document body as PLAIN MARKDOWN text ONLY (use #, ##, -, **bold**, > quote, fenced code blocks, tables, etc.). This tool renders Markdown to the target format itself: even for .html and .pdf you MUST send Markdown, NOT HTML. Do NOT emit HTML/CSS: no <!DOCTYPE>, <html>, <head>, <body>, <div>, <style>, <script> or any HTML tags. CORRECT example: '# Title (newline) ## Chapter 1 (newline) Once upon a time...'. WRONG (will be rejected): '<html><body><h1>Title</h1>...</html>'."`
+	FileName string `json:"filename" description:"要创建的文件名。仅支持 .pdf、.html 和 .md 三种格式，例如 'report.pdf'、'report.html'、'report.md'。"`
+	Content  string `json:"content" description:"文档正文，必须是纯 Markdown 文本（使用 #、##、-、**加粗**、> 引用、围栏代码块、表格等 Markdown 语法）。本工具会在内部自动将 Markdown 渲染为目标格式，即使生成 .html 或 .pdf 也必须传入 Markdown，禁止传入 HTML/CSS 源码。不允许包含 <!DOCTYPE>、<html>、<head>、<body>、<div>、<style>、<script> 等任何 HTML 标签。正确示例：'# 标题（换行）## 第一章（换行）从前有一片森林……'。错误示例（会被拒绝）：'<html><body><h1>标题</h1>...</html>'。"`
 }
 
 // New creates a new file generation tool instance that supports three output
@@ -44,7 +44,7 @@ func New(svc artifact.Service, cfg *at.Config, fc *FontConfig) (tool.Tool, error
 
 	return functiontool.New(functiontool.Config{
 		Name:        "generate_file",
-		Description: "Generates a document file and saves it to the storage server. ONLY supports three formats: Markdown (.md), HTML (.html/.htm), and PDF (.pdf). IMPORTANT: the 'content' argument must ALWAYS be plain Markdown text — this tool performs the Markdown→HTML and Markdown→PDF rendering internally, so you must NEVER pass raw HTML/CSS (no <!DOCTYPE>, <html>, <style>, <script>, etc.); passing HTML will be rejected. For .md the Markdown is saved as-is. Do NOT use this tool for other file types (e.g. .docx, .xlsx, .pptx, .csv, .json, .xml, code files, etc.) — those formats are not supported and will fail. Use this tool only when the user explicitly asks to generate a document in .md, .html, or .pdf format.",
+		Description: "生成文档文件并保存到存储服务器。仅支持三种格式：Markdown (.md)、HTML (.html/.htm) 和 PDF (.pdf)。重要：'content' 参数必须始终为纯 Markdown 文本，本工具会在内部自动完成 Markdown 到 HTML 及 Markdown 到 PDF 的渲染，因此绝对不能传入原始 HTML/CSS（不允许包含 <!DOCTYPE>、<html>、<style>、<script> 等标签），传入 HTML 会被拒绝。对于 .md 格式，Markdown 内容将原样保存。不要将此工具用于其他文件类型（如 .docx、.xlsx、.pptx、.csv、.json、.xml、代码文件等），这些格式不受支持且会失败。",
 	}, func(ctx tool.Context, args Args) (map[string]any, error) {
 		if args.FileName == "" {
 			return nil, fmt.Errorf("filename is required")
